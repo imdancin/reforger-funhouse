@@ -1,0 +1,6 @@
+apiVersion: v2
+name: arma-reforger-chart
+description: A Helm Chart for running dedicated Arma Reforger game servers via GitOps
+type: application
+version: 1.0.0
+appVersion: "1.0.0"

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  template.arma-status: |
+    message: |
+      :shield: *Arma Reforger Game Server Alert*
+      *Application:* {{.app.metadata.name}}
+      *Status:* {{.app.status.sync.status}}
+      *Operation:* The game infrastructure has successfully reconciled.
+
+  trigger.on-deployed: |
+    - when: app.status.sync.status == 'Synced'
+      send: [arma-status]
