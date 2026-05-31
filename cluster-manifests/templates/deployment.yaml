@@ -13,6 +13,8 @@ spec:
       labels:
         app: arma-server
     spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       containers:
         - name: reforger
           image: ghcr.io/acemod/arma-reforger:latest
@@ -20,6 +22,9 @@ spec:
             - containerPort: 2001
               protocol: UDP
               name: game-port
+            - containerPort: 1999
+              protocol: TCP
+              name: rcon
           resources:
             requests:
               memory: "6Gi"
@@ -33,7 +38,7 @@ spec:
             - name: SERVER_BIND_PORT
               value: "2001"
             - name: SERVER_PUBLIC_ADDRESS
-              value: ""
+              value: "{{ .Values.game.publicAddress }}"
             - name: SERVER_PUBLIC_PORT
               value: "2001"
             - name: GAME_NAME
@@ -47,7 +52,7 @@ spec:
             - name: RCON_PORT
               value: "1999"
             - name: RCON_PASSWORD
-              value: "your_secure_rcon_pass_here"
+              value: "{{ .Values.game.rconPassword }}"
             - name: ARMA_PARAMS
               value: "-loadSessionSave"
           volumeMounts:
@@ -56,7 +61,6 @@ spec:
             - name: profile-vol
               mountPath: /home/profile
             - name: workshop-vol
-              mountPath: /reforger/workshop
       volumes:
         - name: config-vol
           persistentVolumeClaim:

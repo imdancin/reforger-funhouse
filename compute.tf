@@ -49,9 +49,19 @@ resource "aws_instance" "arma_server" {
 
               echo "=== Starting Game Server Node Bootstrap ==="
 
-              # 1. Update system packages
+              # 0. Set a stable hostname for the K3s node and local PV affinity
+              hostnamectl set-hostname arma-reforger-compute
+              echo "arma-reforger-compute" > /etc/hostname
+
+              # 1. Update system packages and install Amazon SSM Agent
               apt-get update -y
               apt-get upgrade -y
+              apt-get install -y amazon-ssm-agent || {
+                curl -fsSL "https://s3.us-west-2.amazonaws.com/amazon-ssm-us-west-2/latest/debian_amd64/amazon-ssm-agent.deb" -o /tmp/amazon-ssm-agent.deb
+                dpkg -i /tmp/amazon-ssm-agent.deb
+              }
+              systemctl enable amazon-ssm-agent
+              systemctl start amazon-ssm-agent
 
               # 2. Optimize Kernel parameters for intensive UDP game traffic
               cat <<-SYS | tee -a /etc/sysctl.conf
@@ -65,6 +75,9 @@ resource "aws_instance" "arma_server" {
               # 3. FIXED: Complete untruncated IMDSv2 endpoint mapping blocks
               AWS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
               LOCAL_IP=$(curl -s -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
+
+              mkdir -p /opt/arma-server-data
+              chown root:root /opt/arma-server-data
 
               # 4. FIXED: Complete tracking endpoint to target the real K3s installation script
               curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
@@ -86,8 +99,8 @@ resource "aws_instance" "arma_server" {
 
               # 7. Wait for ArgoCD API Server to be fully operational
               echo "Waiting for ArgoCD deployments to stabilize..."
-              /usr/local/bin/kubectl rollout status deployment/argocd-server -n argocd --timeout=3m
-              /usr/local/bin/kubectl rollout status deployment/argocd-application-controller -n argocd --timeout=3m
+              /usr/local/bin/kubectl rollout status deployment/argocd-server -n argocd --timeout=5m
+              /usr/local/bin/kubectl rollout status deployment/argocd-application-controller -n argocd --timeout=5m
 
               # 8. Wait for the ArgoCD Application CRD to become available
               echo "Waiting for ArgoCD CRDs to register..."
@@ -109,7 +122,7 @@ resource "aws_instance" "arma_server" {
                 project: default
                 source:
                   repoURL: 'https://github.com/imdancin/reforger-funhouse.git'
-                  targetRevision: HEAD
+                  targetRevision: main
                   path: cluster-manifests
                   helm:
                     valueFiles:
