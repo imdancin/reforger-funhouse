@@ -39,7 +39,22 @@ The ArgoCD `Application` is configured to use:
 
 - `https://github.com/imdancin/reforger-funhouse.git`
 
-Because this repo is private, ArgoCD will not be able to sync until you add credentials with `argocd repo add`.
+Because this repo is private, ArgoCD will not be able to sync until you add repository credentials to ArgoCD.
+
+After the EC2 node is bootstrapped and ArgoCD is running, use the Windows CLI helper to install `argocd.exe`, then log in and add the private repo:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install-argocd-cli.ps1
+```
+
+Example:
+
+```powershell
+.\argocd.exe login <argocd-server> --username admin --password <admin-password>
+.\argocd.exe repo add https://github.com/imdancin/reforger-funhouse.git --username <github-user> --password <personal-access-token>
+```
+
+If you prefer SSH, add your repo with `--ssh-private-key-path` instead.
 
 ### 3. `main` branch must be present and pushed
 
@@ -86,8 +101,38 @@ powershell -ExecutionPolicy Bypass -File .\install-argocd-cli.ps1
 After installing the CLI, add the private repo:
 
 ```powershell
-.\argocd.exe login <argocd-server> --username admin --password <argocd-password>
-.\argocd.exe repo add https://github.com/imdancin/reforger-funhouse.git --username <github-user> --password <personal-access-token>
+.\argocd.exe login <argocd-server> --username admin --password <argocd-password> --insecure
+.\argocd.exe repo add https://github.com/imdancin/reforger-funhouse.git --username <github-user> --password <personal-access-token> --name reforger-funhouse --insecure
+```
+
+Or use the helper script once `argocd.exe` is available:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\add-argocd-repo.ps1 \
+  -ArgocdServer <argocd-server> \
+  -AdminPassword <admin-password> \
+  -GithubUser <github-user> \
+  -GithubToken <personal-access-token>
+```
+
+### `add-argocd-portforward.ps1`
+
+Starts a local port-forward to the ArgoCD server so you can open the ArgoCD UI in your browser.
+
+Usage:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\add-argocd-portforward.ps1
+```
+
+By default this forwards:
+
+- `localhost:8080` -> `argocd-server:443`
+
+Then visit:
+
+```text
+https://localhost:8080
 ```
 
 ## Deployment workflow
@@ -109,6 +154,27 @@ terraform apply -var "instance_count=1" -auto-approve
 
 Use the SSM command flow to verify the node and ArgoCD app once the instance is running.
 
+Example validation steps:
+
+```powershell
+aws ssm describe-instance-information --filters Key=InstanceIds,Values=<instance-id> --profile reforger-admin --region us-west-2
+```
+
+Once the instance is visible in SSM, run:
+
+```powershell
+aws ssm send-command --instance-ids <instance-id> --document-name AWS-RunShellScript --comment "Check k3s and ArgoCD" --parameters commands="/usr/local/bin/kubectl get nodes && /usr/local/bin/kubectl get pods -n argocd && /usr/local/bin/kubectl get applications -n argocd" --profile reforger-admin --region us-west-2
+```
+add-argocd-portforward.ps1` — local ArgoCD UI port-forward helper
+- `
+Then verify the game workload and local storage:
+
+```powershell
+aws ssm send-command --instance-ids <instance-id> --document-name AWS-RunShellScript --parameters commands="/usr/local/bin/kubectl get pv,pvc && /usr/local/bin/kubectl get pods -n default" --profile reforger-admin --region us-west-2
+```
+
+If the ArgoCD application is not syncing, add the private repo credentials with `argocd repo add` before retrying.
+
 ## File layout
 
 - `providers.tf` — AWS provider and backend config
@@ -119,6 +185,7 @@ Use the SSM command flow to verify the node and ArgoCD app once the instance is 
 - `iam.tf` — EC2 IAM role/profile for SSM
 - `cluster-manifests/` — ArgoCD/Helm-style deployment manifests
 - `install-argocd-cli.ps1` — ArgoCD CLI helper
+- `add-argocd-repo.ps1` — private GitHub repo registration helper for ArgoCD
 - `bootstrap.ps1` — Terraform backend bootstrap helper
 
 ## Notes

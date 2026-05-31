@@ -56,6 +56,7 @@ resource "aws_instance" "arma_server" {
               # 1. Update system packages and install Amazon SSM Agent
               apt-get update -y
               apt-get upgrade -y
+              apt-get install -y curl
               apt-get install -y amazon-ssm-agent || {
                 curl -fsSL "https://s3.us-west-2.amazonaws.com/amazon-ssm-us-west-2/latest/debian_amd64/amazon-ssm-agent.deb" -o /tmp/amazon-ssm-agent.deb
                 dpkg -i /tmp/amazon-ssm-agent.deb
@@ -99,16 +100,19 @@ resource "aws_instance" "arma_server" {
 
               # 7. Wait for ArgoCD API Server to be fully operational
               echo "Waiting for ArgoCD deployments to stabilize..."
-              /usr/local/bin/kubectl rollout status deployment/argocd-server -n argocd --timeout=5m
-              /usr/local/bin/kubectl rollout status deployment/argocd-application-controller -n argocd --timeout=5m
+              /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-server -n argocd --timeout=5m
+              /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-application-controller -n argocd --timeout=5m
+              /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-repo-server -n argocd --timeout=5m
+              /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-dex-server -n argocd --timeout=5m || true
 
               # 8. Wait for the ArgoCD Application CRD to become available
               echo "Waiting for ArgoCD CRDs to register..."
               until /usr/local/bin/kubectl get crd applications.argoproj.io >/dev/null 2>&1; do
                 sleep 5
               done
+              /usr/local/bin/kubectl wait --for=condition=established crd/applications.argoproj.io --timeout=5m || true
 
-              # 9. Fully hydrated your explicit Git repository and API endpoint destinations
+              # 9. Fully hydrate your explicit Git repository and API endpoint destinations
               echo "Hydrating cluster state via GitOps..."
               /usr/local/bin/kubectl apply -f - <<MANIFEST
               apiVersion: argoproj.io/v1alpha1
@@ -128,7 +132,7 @@ resource "aws_instance" "arma_server" {
                     valueFiles:
                       - ${var.active_scenario_config}
                 destination:
-                  server: 'https://default.svc'
+                  server: 'https://kubernetes.default.svc'
                   namespace: default
                 syncPolicy:
                   automated:
