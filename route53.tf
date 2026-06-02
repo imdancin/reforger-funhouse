@@ -1,24 +1,29 @@
 variable "enable_custom_dns" {
   type        = bool
-  default     = false
+  default     = true
   description = "Set to true if you have an active Route 53 Hosted Zone ready. Set to false to bypass DNS creation."
+}
+
+variable "domain_name" {
+  type        = string
+  description = "The registered domain name managed by Route 53 (e.g. imdancin.com)"
 }
 
 # Reference an existing Route 53 Hosted Zone only if DNS is enabled
 data "aws_route53_zone" "primary" {
   count        = var.enable_custom_dns ? 1 : 0
-  name         = "yourdomain.com." # Replace with your real registered domain name
+  name         = var.domain_name
   private_zone = false
 }
 
 # Create a game-specific A Record only if DNS is enabled
 resource "aws_route53_record" "arma_server_dns" {
   count   = var.enable_custom_dns ? 1 : 0
-  
+
   zone_id = data.aws_route53_zone.primary[0].zone_id
-  name    = "arma.${data.aws_route53_zone.primary[0].name}" 
+  name    = "arma.${data.aws_route53_zone.primary[0].name}"
   type    = "A"
-  ttl     = 300 
+  ttl     = 300
 
   records = [
     aws_eip.arma_static_ip.public_ip
