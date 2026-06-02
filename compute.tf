@@ -40,7 +40,6 @@ resource "aws_instance" "arma_server" {
   user_data = <<-EOF
               #!/bin/bash
               set -euo pipefail
-              trap 'aws ssm put-parameter --name /arma-reforger/bootstrap-status --value "failed:$(date -u +%Y-%m-%dT%H:%M:%SZ)" --type String --overwrite' ERR
 
               echo "=== Starting Game Server Node Bootstrap ==="
 
@@ -48,18 +47,26 @@ resource "aws_instance" "arma_server" {
               hostnamectl set-hostname arma-reforger-compute
               echo "arma-reforger-compute" > /etc/hostname
 
-              # 1. Update system packages and install Amazon SSM Agent
+              # 1. Update system packages and install dependencies
               apt-get update -y
               apt-get upgrade -y
-              apt-get install -y curl
-              apt-get install -y amazon-ssm-agent || {
-                curl -fsSL "https://s3.us-west-2.amazonaws.com/amazon-ssm-us-west-2/latest/debian_amd64/amazon-ssm-agent.deb" -o /tmp/amazon-ssm-agent.deb
-                dpkg -i /tmp/amazon-ssm-agent.deb
-              }
-              systemctl enable amazon-ssm-agent
-              systemctl start amazon-ssm-agent
+              apt-get install -y curl unzip
 
-              # 2. Optimize Kernel parameters for intensive UDP game traffic
+              # 2. Install AWS CLI v2 (required for SSM parameter reads/writes)
+              curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+              unzip -q /tmp/awscliv2.zip -d /tmp
+              /tmp/aws/install
+              export PATH=$PATH:/usr/local/bin
+              rm -rf /tmp/awscliv2.zip /tmp/aws
+
+              # NOW safe to set the ERR trap — aws CLI is available
+              trap 'aws ssm put-parameter --name /arma-reforger/bootstrap-status --value "failed:$(date -u +%Y-%m-%dT%H:%M:%SZ)" --type String --overwrite' ERR
+
+              # 3. Install Amazon SSM Agent (snap version already present on Ubuntu 24.04 — skip deb)
+              systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+              systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+
+              # 4. Optimize Kernel parameters for intensive UDP game traffic
               cat <<-SYS | tee -a /etc/sysctl.conf
               net.core.rmem_max=16777216
               net.core.wmem_max=16777216
@@ -68,28 +75,33 @@ resource "aws_instance" "arma_server" {
               SYS
               sysctl -p
 
-              # 3. FIXED: Complete untruncated IMDSv2 endpoint mapping blocks
+              # 5. Get instance local IP via IMDSv2
               AWS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
               LOCAL_IP=$(curl -s -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 
               mkdir -p /opt/arma-server-data
               chown root:root /opt/arma-server-data
 
-              # 4. FIXED: Complete tracking endpoint to target the real K3s installation script
+              # 6. Install Helm
+              echo "Installing Helm..."
+              curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+              # 7. Install K3s
               curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server \
                 --disable traefik \
                 --disable local-storage \
                 --node-ip=$LOCAL_IP \
                 --flannel-backend=host-gw" sh -
 
-              # 5. Wait for Cluster Node to report Ready status
+              # 8. Wait for Cluster Node to report Ready status
               echo "Waiting for K3s node to come online..."
               until /usr/local/bin/kubectl get node | grep -q "Ready"; do
                 sleep 5
               done
 
-              # 5a. Install External Secrets Operator via Helm
+              # 9a. Install External Secrets Operator via Helm
               echo "Installing External Secrets Operator..."
+              export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
               helm repo add external-secrets https://charts.external-secrets.io
               helm install external-secrets external-secrets/external-secrets \
                 -n external-secrets --create-namespace \
@@ -97,7 +109,7 @@ resource "aws_instance" "arma_server" {
               /usr/local/bin/kubectl wait --for=condition=Available deployment/external-secrets \
                 -n external-secrets --timeout=5m
 
-              # 5b. Retrieve ESO IAM credentials from SSM and create the eso-aws-credentials Kubernetes Secret
+              # 9b. Retrieve ESO IAM credentials from SSM and create the eso-aws-credentials Kubernetes Secret
               echo "Creating eso-aws-credentials Kubernetes Secret..."
               ESO_KEY_ID=$(aws ssm get-parameter --name /arma-reforger/eso-access-key-id --query Parameter.Value --output text)
               ESO_SECRET=$(aws ssm get-parameter --name /arma-reforger/eso-secret-access-key --with-decryption --query Parameter.Value --output text)
@@ -106,12 +118,12 @@ resource "aws_instance" "arma_server" {
                 --from-literal=secret-access-key="$ESO_SECRET" \
                 -n default
 
-              # 6. FIXED: Restored complete raw github pathways for the ArgoCD control engine
+              # 10. Install ArgoCD
               echo "Installing ArgoCD..."
               /usr/local/bin/kubectl create namespace argocd || true
-              /usr/local/bin/kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+              /usr/local/bin/kubectl apply -n argocd --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
 
-              # 7. Wait for ArgoCD API Server to be fully operational
+              # 11. Wait for ArgoCD to be fully operational
               echo "Waiting for ArgoCD deployments to stabilize..."
               /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-server -n argocd --timeout=5m
               echo "Waiting for argocd-application-controller StatefulSet to roll out..."
@@ -119,14 +131,14 @@ resource "aws_instance" "arma_server" {
               /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-repo-server -n argocd --timeout=5m
               /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-dex-server -n argocd --timeout=5m || true
 
-              # 8. Wait for the ArgoCD Application CRD to become available
+              # 12. Wait for ArgoCD Application CRD
               echo "Waiting for ArgoCD CRDs to register..."
               until /usr/local/bin/kubectl get crd applications.argoproj.io >/dev/null 2>&1; do
                 sleep 5
               done
               /usr/local/bin/kubectl wait --for=condition=established crd/applications.argoproj.io --timeout=5m || true
 
-              # 9. Fully hydrate your explicit Git repository and API endpoint destinations
+              # 13. Apply ArgoCD Application manifest
               echo "Hydrating cluster state via GitOps..."
               /usr/local/bin/kubectl apply -f - <<MANIFEST
               apiVersion: argoproj.io/v1alpha1
