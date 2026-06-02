@@ -38,7 +38,10 @@ spec:
             - name: SERVER_BIND_PORT
               value: "2001"
             - name: SERVER_PUBLIC_ADDRESS
-              value: "{{ .Values.game.publicAddress }}"
+              valueFrom:
+                secretKeyRef:
+                  name: arma-public-address-secret
+                  key: public-address
             - name: SERVER_PUBLIC_PORT
               value: "2001"
             - name: GAME_NAME
@@ -52,15 +55,22 @@ spec:
             - name: RCON_PORT
               value: "1999"
             - name: RCON_PASSWORD
-              value: "{{ .Values.game.rconPassword }}"
+              valueFrom:
+                secretKeyRef:
+                  name: arma-rcon-secret
+                  key: rcon-password
             - name: ARMA_PARAMS
               value: "-loadSessionSave"
           volumeMounts:
             - name: config-vol
               mountPath: /reforger/Configs
+              subPath: Configs
             - name: profile-vol
               mountPath: /home/profile
+              subPath: Profile
             - name: workshop-vol
+              mountPath: /reforger/Workshop
+              subPath: Workshop
       volumes:
         - name: config-vol
           persistentVolumeClaim:

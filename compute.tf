@@ -1,9 +1,3 @@
-variable "active_scenario_config" {
-  type        = string
-  default     = "values-freedomfighters.yaml"
-  description = "The target scenario values file name to load inside the cluster-manifests directory"
-}
-
 # Variable to toggle the compute footprint on or off
 variable "instance_count" {
   type        = number
@@ -46,6 +40,7 @@ resource "aws_instance" "arma_server" {
   user_data = <<-EOF
               #!/bin/bash
               set -euo pipefail
+              trap 'aws ssm put-parameter --name /arma-reforger/bootstrap-status --value "failed:$(date -u +%Y-%m-%dT%H:%M:%SZ)" --type String --overwrite' ERR
 
               echo "=== Starting Game Server Node Bootstrap ==="
 
@@ -93,6 +88,24 @@ resource "aws_instance" "arma_server" {
                 sleep 5
               done
 
+              # 5a. Install External Secrets Operator via Helm
+              echo "Installing External Secrets Operator..."
+              helm repo add external-secrets https://charts.external-secrets.io
+              helm install external-secrets external-secrets/external-secrets \
+                -n external-secrets --create-namespace \
+                --set installCRDs=true
+              /usr/local/bin/kubectl wait --for=condition=Available deployment/external-secrets \
+                -n external-secrets --timeout=5m
+
+              # 5b. Retrieve ESO IAM credentials from SSM and create the eso-aws-credentials Kubernetes Secret
+              echo "Creating eso-aws-credentials Kubernetes Secret..."
+              ESO_KEY_ID=$(aws ssm get-parameter --name /arma-reforger/eso-access-key-id --query Parameter.Value --output text)
+              ESO_SECRET=$(aws ssm get-parameter --name /arma-reforger/eso-secret-access-key --with-decryption --query Parameter.Value --output text)
+              /usr/local/bin/kubectl create secret generic eso-aws-credentials \
+                --from-literal=access-key-id="$ESO_KEY_ID" \
+                --from-literal=secret-access-key="$ESO_SECRET" \
+                -n default
+
               # 6. FIXED: Restored complete raw github pathways for the ArgoCD control engine
               echo "Installing ArgoCD..."
               /usr/local/bin/kubectl create namespace argocd || true
@@ -101,7 +114,8 @@ resource "aws_instance" "arma_server" {
               # 7. Wait for ArgoCD API Server to be fully operational
               echo "Waiting for ArgoCD deployments to stabilize..."
               /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-server -n argocd --timeout=5m
-              /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-application-controller -n argocd --timeout=5m
+              echo "Waiting for argocd-application-controller StatefulSet to roll out..."
+              /usr/local/bin/kubectl rollout status statefulset/argocd-application-controller -n argocd --timeout=5m
               /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-repo-server -n argocd --timeout=5m
               /usr/local/bin/kubectl wait --for=condition=Available deployment/argocd-dex-server -n argocd --timeout=5m || true
 
@@ -130,7 +144,7 @@ resource "aws_instance" "arma_server" {
                   path: cluster-manifests
                   helm:
                     valueFiles:
-                      - ${var.active_scenario_config}
+                      - $(aws ssm get-parameter --name /arma-reforger/active-scenario --query Parameter.Value --output text)
                 destination:
                   server: 'https://kubernetes.default.svc'
                   namespace: default
@@ -141,6 +155,7 @@ resource "aws_instance" "arma_server" {
               MANIFEST
 
               echo "=== K3s, ArgoCD, and Arma Reforger Bootstrap Complete ==="
+              aws ssm put-parameter --name /arma-reforger/bootstrap-status --value "ready:$(date -u +%Y-%m-%dT%H:%M:%SZ)" --type String --overwrite
               EOF
 
   tags = {

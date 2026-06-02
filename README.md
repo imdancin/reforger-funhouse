@@ -10,6 +10,57 @@ This repository contains Terraform and Kubernetes GitOps configuration for a ded
 - installs ArgoCD and applies a GitOps `Application` resource
 - deploys an Arma Reforger game container through Helm-style manifests
 
+## ⚠️ Before Making This Repository Public
+
+**Do not change this repository's visibility to public until all of the following steps are complete.**
+
+This repository has historically contained hardcoded secrets including RCON passwords, EC2 IP addresses, and access tokens. Even if those values have been removed from the current working tree, they may still exist in Git history and will be exposed the moment the repo goes public.
+
+### What must be done before going public
+
+1. **Remove all secrets from the working tree** — verify no plaintext credentials remain in any tracked file. This is covered by **Requirement 1: Remove Hardcoded Secrets from the Repository**. Specifically confirm:
+   - `cluster-manifests/values-freedomfighters.yaml` contains no `rconPassword` or `publicAddress` fields
+   - `terraform.tfvars` is not tracked by Git (run `git rm --cached terraform.tfvars` if it is)
+   - No hardcoded IPs, tokens, or passwords appear in any `.tf`, `.yaml`, or `.ps1` file
+
+2. **Scrub Git history** — remove the sensitive file from all past commits using `git filter-repo`:
+
+   ```bash
+   git filter-repo --path cluster-manifests/values-freedomfighters.yaml --invert-paths
+   ```
+
+   This rewrites history to exclude `cluster-manifests/values-freedomfighters.yaml` from every commit. After running this command, force-push to all remotes:
+
+   ```bash
+   git push origin --force --all
+   git push origin --force --tags
+   ```
+
+   > **Note:** `git filter-repo` must be installed separately (`pip install git-filter-repo`). All collaborators must re-clone the repository after a history rewrite.
+
+3. **Rotate any exposed secrets** — treat any credential that was ever committed as compromised. Rotate the RCON password, revoke any exposed tokens, and release/reassign any IP addresses that were hardcoded.
+
+4. **Verify `.gitignore`** — confirm `*.tfvars` and `*.tfvars.json` are listed so secrets files are never accidentally committed again.
+
+Only after completing all four steps is it safe to make this repository public.
+
+---
+
+## Setup Notes
+
+### Untracking `terraform.tfvars`
+
+If `terraform.tfvars` is currently tracked by Git (i.e., it was committed before the `*.tfvars` entry was added to `.gitignore`), run the following command to stop tracking it without deleting the local file:
+
+```bash
+git rm --cached terraform.tfvars
+git commit -m "chore: untrack terraform.tfvars"
+```
+
+After this, `terraform.tfvars` will be ignored by Git going forward. Verify with `git status` — the file should no longer appear as a tracked or modified file.
+
+---
+
 ## Current known issues
 
 ### 1. Backend state bucket
@@ -33,28 +84,13 @@ Or, if you prefer to only reconfigure backend settings without moving state, use
 terraform init -reconfigure
 ```
 
-### 2. ArgoCD repo access is private
+### 2. ArgoCD repo access (public — no credentials required)
 
 The ArgoCD `Application` is configured to use:
 
 - `https://github.com/imdancin/reforger-funhouse.git`
 
-Because this repo is private, ArgoCD will not be able to sync until you add repository credentials to ArgoCD.
-
-After the EC2 node is bootstrapped and ArgoCD is running, use the Windows CLI helper to install `argocd.exe`, then log in and add the private repo:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install-argocd-cli.ps1
-```
-
-Example:
-
-```powershell
-.\argocd.exe login <argocd-server> --username admin --password <admin-password>
-.\argocd.exe repo add https://github.com/imdancin/reforger-funhouse.git --username <github-user> --password <personal-access-token>
-```
-
-If you prefer SSH, add your repo with `--ssh-private-key-path` instead.
+This repository is public, so ArgoCD can clone it without any credentials. No `argocd repo add` step is required after bootstrapping.
 
 ### 3. `main` branch must be present and pushed
 
@@ -182,8 +218,10 @@ If the ArgoCD application is not syncing, add the private repo credentials with 
 - `networking.tf` — VPC, subnet, internet gateway, route table
 - `security-groups.tf` — game ports and network boundaries
 - `compute.tf` — EC2 instance definition and bootstrap user_data
-- `iam.tf` — EC2 IAM role/profile for SSM
+- `iam.tf` — EC2 IAM role/profile for SSM and GitHub Actions least-privilege policy
+- `secrets.tf` — Secrets Manager and SSM Parameter Store resource provisioning
 - `cluster-manifests/` — ArgoCD/Helm-style deployment manifests
+- `cluster-manifests/templates/external-secrets.yaml` — ESO SecretStore and ExternalSecret resources
 - `install-argocd-cli.ps1` — ArgoCD CLI helper
 - `add-argocd-repo.ps1` — private GitHub repo registration helper for ArgoCD
 - `bootstrap.ps1` — Terraform backend bootstrap helper

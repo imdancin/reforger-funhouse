@@ -7,8 +7,8 @@ data:
   template.arma-status: |
     message: |
       :shield: *Arma Reforger Game Server Alert*
-      *Application:* {{.app.metadata.name}}
-      *Status:* {{.app.status.sync.status}}
+      *Application:* {{ "{{" }}.app.metadata.name{{ "}}" }}
+      *Status:* {{ "{{" }}.app.status.sync.status{{ "}}" }}
       *Operation:* The game infrastructure has successfully reconciled.
 
   trigger.on-deployed: |
