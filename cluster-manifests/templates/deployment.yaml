@@ -45,6 +45,8 @@ spec:
                   key: public-address
             - name: SERVER_PUBLIC_PORT
               value: "2001"
+            - name: STEAM_APPID
+              value: "1890870"
             - name: GAME_NAME
               value: "{{ .Values.game.name }}"
             - name: GAME_MAX_PLAYERS
