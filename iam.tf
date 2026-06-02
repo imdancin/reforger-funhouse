@@ -150,7 +150,11 @@ resource "aws_iam_user_policy" "eso_reader_policy" {
         Effect = "Allow"
         Action = ["secretsmanager:GetSecretValue"]
         # Trailing wildcard covers the random suffix AWS appends to secret ARNs
-        Resource = "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/rcon-password*"
+        Resource = [
+          "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/rcon-password*",
+          "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/game-password*",
+          "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/game-admin-password*"
+        ]
       },
       {
         Sid      = "SSMReadPublicAddress"
