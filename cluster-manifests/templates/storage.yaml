@@ -18,6 +18,9 @@ spec:
     - ReadWriteOnce
   persistentVolumeReclaimPolicy: Retain
   storageClassName: arma-local-storage
+  claimRef:
+    name: arma-game-pvc
+    namespace: default
   local:
     path: /opt/arma-server-data
   nodeAffinity:
