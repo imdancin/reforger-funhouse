@@ -80,3 +80,21 @@ resource "aws_secretsmanager_secret_version" "rcon_password" {
   secret_id     = aws_secretsmanager_secret.rcon_password.id
   secret_string = var.rcon_password
 }
+
+# Manually set Grafana admin password — stored in Secrets Manager, set in terraform.tfvars
+variable "grafana_admin_password" {
+  type        = string
+  sensitive   = true
+  description = "Admin password for Grafana web UI authentication"
+}
+
+# Secrets Manager secret container for the Grafana admin password
+resource "aws_secretsmanager_secret" "grafana_admin_password" {
+  name                    = "/arma-reforger/grafana-admin-password"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "grafana_admin_password" {
+  secret_id     = aws_secretsmanager_secret.grafana_admin_password.id
+  secret_string = var.grafana_admin_password
+}

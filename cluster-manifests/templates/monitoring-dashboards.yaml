@@ -1,0 +1,362 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-node-exporter
+  namespace: default
+  labels:
+    app: grafana
+    grafana-dashboard: "true"
+data:
+  node-exporter.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 70 },
+                  { "color": "red", "value": 90 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "id": 1,
+          "title": "CPU Usage %",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "100 - (avg(rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)",
+              "legendFormat": "CPU Usage",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 70 },
+                  { "color": "red", "value": 90 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "id": 2,
+          "title": "Memory Usage %",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))",
+              "legendFormat": "Memory Usage",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percent",
+              "min": 0,
+              "max": 100,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 70 },
+                  { "color": "red", "value": 90 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "id": 3,
+          "title": "Disk Usage %",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "100 - (node_filesystem_avail_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} / node_filesystem_size_bytes{mountpoint=\"/\",fstype!=\"tmpfs\"} * 100)",
+              "legendFormat": "Disk Usage /",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "id": 4,
+          "title": "Network Throughput",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "rate(node_network_receive_bytes_total{device!=\"lo\"}[5m])",
+              "legendFormat": "Receive {{`{{`}}device{{`}}`}}",
+              "refId": "A"
+            },
+            {
+              "expr": "rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m])",
+              "legendFormat": "Transmit {{`{{`}}device{{`}}`}}",
+              "refId": "B"
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["node-exporter", "infrastructure"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "title": "Node Exporter",
+      "uid": "node-exporter-dashboard",
+      "version": 1
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-kubernetes
+  namespace: default
+  labels:
+    app: grafana
+    grafana-dashboard: "true"
+data:
+  kubernetes.json: |
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+          "id": 1,
+          "title": "Pods Running",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "count(kube_pod_status_phase{phase=\"Running\"} == 1)",
+              "legendFormat": "Running",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "yellow", "value": null }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 0 },
+          "id": 2,
+          "title": "Pods Pending",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "count(kube_pod_status_phase{phase=\"Pending\"} == 1) or vector(0)",
+              "legendFormat": "Pending",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+          "id": 3,
+          "title": "Pods Failed",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "count(kube_pod_status_phase{phase=\"Failed\"} == 1) or vector(0)",
+              "legendFormat": "Failed",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "id": 4,
+          "title": "Pod CPU Usage",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum(rate(container_cpu_usage_seconds_total{container!=\"\",pod!=\"\"}[5m])) by (pod)",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "id": 5,
+          "title": "Pod Memory Usage",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum(container_memory_working_set_bytes{container!=\"\",pod!=\"\"}) by (pod)",
+              "legendFormat": "{{`{{`}}pod{{`}}`}}",
+              "refId": "A"
+            }
+          ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 0.5 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "id": 6,
+          "title": "Deployment Replica Availability",
+          "type": "table",
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_available",
+              "legendFormat": "{{`{{`}}deployment{{`}}`}} available",
+              "refId": "A",
+              "format": "table",
+              "instant": true
+            },
+            {
+              "expr": "kube_deployment_spec_replicas",
+              "legendFormat": "{{`{{`}}deployment{{`}}`}} desired",
+              "refId": "B",
+              "format": "table",
+              "instant": true
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["kubernetes", "cluster"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "title": "Kubernetes Cluster",
+      "uid": "kubernetes-cluster-dashboard",
+      "version": 1
+    }
+{{- end }}

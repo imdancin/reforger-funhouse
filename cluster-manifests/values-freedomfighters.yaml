@@ -16,3 +16,30 @@ game:
   serverMaxViewDistance: "2500"
   serverMinGrassDistance: "50"
   networkViewDistance: "2500"
+
+monitoring:
+  enabled: true
+  prometheus:
+    scrapeInterval: 15s
+    retention: 15d
+    storageSize: 10Gi
+    resources:
+      requests:
+        cpu: "250m"
+        memory: "512Mi"
+      limits:
+        cpu: "500m"
+        memory: "1Gi"
+  kubeStateMetrics:
+    scrapeInterval: 30s
+  nodeExporter:
+    scrapeInterval: 30s
+  grafana:
+    storageSize: 1Gi
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "250m"
+        memory: "256Mi"

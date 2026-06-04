@@ -46,3 +46,14 @@ resource "aws_security_group" "arma_server_sg" {
     Name = "arma-server-security-group"
   }
 }
+
+resource "aws_security_group_rule" "grafana_ingress" {
+  count             = var.instance_count > 0 ? 1 : 0
+  type              = "ingress"
+  from_port         = 3000
+  to_port           = 3000
+  protocol          = "tcp"
+  cidr_blocks       = ["0.0.0.0/0"]
+  security_group_id = aws_security_group.arma_server_sg.id
+  description       = "Grafana web UI access"
+}
