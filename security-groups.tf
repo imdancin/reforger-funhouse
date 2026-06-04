@@ -21,6 +21,18 @@ resource "aws_security_group" "arma_server_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # SSH access from operator (conditional on ssh_allowed_cidr being set)
+  dynamic "ingress" {
+    for_each = var.ssh_allowed_cidr != "" ? [1] : []
+    content {
+      description = "SSH access from operator home IP"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [var.ssh_allowed_cidr]
+    }
+  }
+
   # Stateful Outbound Traffic Engine
   egress {
     description = "Allow all outbound traffic for system updates and SteamCMD patches"
@@ -33,17 +45,4 @@ resource "aws_security_group" "arma_server_sg" {
   tags = {
     Name = "arma-server-security-group"
   }
-}
-
-
-resource "aws_security_group_rule" "ssh_ingress" {
-  count = var.ssh_allowed_cidr != "" ? 1 : 0
-
-  type              = "ingress"
-  from_port         = 22
-  to_port           = 22
-  protocol          = "tcp"
-  cidr_blocks       = [var.ssh_allowed_cidr]
-  description       = "SSH access from operator home IP"
-  security_group_id = aws_security_group.arma_server_sg.id
 }

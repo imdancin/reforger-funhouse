@@ -19,7 +19,7 @@ SSH_TIMEOUT = 300.0  # max seconds to wait for SSH
 LOG_FILE_WAIT_TIMEOUT = 60.0  # max seconds to wait for cloud-init log
 POD_POLL_INTERVAL = 5.0  # seconds between pod status checks
 POD_TIMEOUT = 300.0  # max seconds to wait for pod Running
-SSH_KEY_PATH = Path.home() / ".ssh" / "arma_reforger_ed25519"
+SSH_KEY_PATH = Path.home() / ".ssh" / "id_ed25519"
 SSH_USERNAME = "ubuntu"
 TERRAFORM_OUTPUT_KEY = "arma_server_public_ip"
 BOOTSTRAP_MARKER = "=== K3s, ArgoCD, and Arma Reforger Bootstrap Complete ==="
