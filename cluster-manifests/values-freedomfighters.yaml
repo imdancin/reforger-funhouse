@@ -4,7 +4,7 @@ game:
   scenarioId: "{64B2F8D8059EE270}Missions/FreedomFighters/Everon.conf"
   modsList: "65AD7BCC9F6B3B4E=1.5.20,65AD7D2E9866FA6E=1.5.20,CAFEBEEFF0CACC1A=0.68.1,65AD7CF69FAF1FDD=1.5.20,6586079789278413=1.5.20,65AD7C379CBD394D=1.5.20,65AD7D4099944EBD=1.5.20,5D6EA74A94173EDF=0.6.10,65AD7D0D9941A380=1.5.20,5D6EBC81EB1842EF=0.6.18,65AD7D1E9EEAFA53=1.5.20"
   # Server visibility — false keeps it out of the public server browser
-  visible: false
+  visible: true
   # Admin Steam ID list
   admins: "76561197984093036"
   # Supported platforms
