@@ -6,4 +6,8 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "git-filter-repo>=2.47.0",
+    "paramiko>=3.4.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
