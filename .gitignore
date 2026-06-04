@@ -47,3 +47,14 @@ terraform.rc
 #Editor stuff
 .kiro/*
 .hypothesis/*
+
+# SSH private key exclusions
+*.pem
+id_rsa
+id_ed25519
+id_ecdsa
+id_dsa
+arma_reforger_ed25519
+
+# Allow public keys to be tracked
+!*.pub

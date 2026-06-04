@@ -1,14 +1,3 @@
-variable "enable_custom_dns" {
-  type        = bool
-  default     = true
-  description = "Set to true if you have an active Route 53 Hosted Zone ready. Set to false to bypass DNS creation."
-}
-
-variable "domain_name" {
-  type        = string
-  description = "The registered domain name managed by Route 53 (e.g. imdancin.com)"
-}
-
 # Reference an existing Route 53 Hosted Zone only if DNS is enabled
 data "aws_route53_zone" "primary" {
   count        = var.enable_custom_dns ? 1 : 0

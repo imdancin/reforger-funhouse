@@ -34,3 +34,16 @@ resource "aws_security_group" "arma_server_sg" {
     Name = "arma-server-security-group"
   }
 }
+
+
+resource "aws_security_group_rule" "ssh_ingress" {
+  count = var.ssh_allowed_cidr != "" ? 1 : 0
+
+  type              = "ingress"
+  from_port         = 22
+  to_port           = 22
+  protocol          = "tcp"
+  cidr_blocks       = [var.ssh_allowed_cidr]
+  description       = "SSH access from operator home IP"
+  security_group_id = aws_security_group.arma_server_sg.id
+}

@@ -1,3 +1,11 @@
+# SSH public key — injected into instance user_data, set in terraform.tfvars
+variable "ssh_public_key" {
+  description = "OpenSSH-format public key string (e.g., ssh-ed25519 AAAA... or ssh-rsa AAAA...). Leave empty to skip SSH key provisioning."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 # Manually set game join password — stored in Secrets Manager, set in terraform.tfvars
 variable "game_password" {
   type        = string

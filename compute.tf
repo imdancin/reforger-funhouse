@@ -1,10 +1,3 @@
-# Variable to toggle the compute footprint on or off
-variable "instance_count" {
-  type        = number
-  default     = 0
-  description = "Set to 1 to boot the game server, set to 0 to tear it down"
-}
-
 # Persistent Elastic IP allocated permanently
 resource "aws_eip" "arma_static_ip" {
   domain = "vpc"
@@ -51,6 +44,23 @@ resource "aws_instance" "arma_server" {
               apt-get update -y
               apt-get upgrade -y
               apt-get install -y curl unzip
+
+              # --- SSH Public Key Injection (conditional) ---
+              SSH_PUBLIC_KEY="${var.ssh_public_key}"
+              if [ -n "$SSH_PUBLIC_KEY" ]; then
+                mkdir -p /home/ubuntu/.ssh
+                echo "$SSH_PUBLIC_KEY" > /home/ubuntu/.ssh/authorized_keys
+                chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+                chmod 700 /home/ubuntu/.ssh
+                chmod 600 /home/ubuntu/.ssh/authorized_keys
+
+                # Harden sshd configuration
+                cat > /etc/ssh/sshd_config.d/99-arma-hardening.conf <<SSHD
+              PubkeyAuthentication yes
+              PasswordAuthentication no
+              SSHD
+                systemctl restart sshd
+              fi
 
               # 2. Install AWS CLI v2 (required for SSM parameter reads/writes)
               curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
