@@ -141,6 +141,36 @@ rcon_password       = "yourrconpassword"
 
 Game settings (scenario, mods, player count) are in `cluster-manifests/values-freedomfighters.yaml`.
 
+## Monitoring (Grafana + Prometheus)
+
+The stack includes a full observability layer that deploys alongside the game server:
+
+- **Prometheus** scrapes metrics from the K3s cluster (kubelet, kube-state-metrics, node-exporter) every 15-30 seconds and stores them with 15-day retention
+- **Grafana** serves dashboards at `grafana.imdancin.com:3000` (or `<public_ip>:3000`)
+- **Pre-built dashboards** for Node Exporter (CPU, memory, disk, network) and Kubernetes (pod status, resource usage, deployment replicas)
+
+### Accessing Grafana
+
+- **URL**: `http://grafana.imdancin.com:3000` (requires `enable_custom_dns = true`)
+- **Username**: `admin`
+- **Password**: stored in AWS Secrets Manager at `/arma-reforger/grafana-admin-password`
+
+Set the Grafana admin password in your `terraform.tfvars`:
+
+```hcl
+grafana_admin_password = "your-secure-password"
+```
+
+### Architecture
+
+Prometheus and its scrape targets (kube-state-metrics, node-exporter) are internal only — exposed via ClusterIP, no external ports opened. Only Grafana uses `hostNetwork` on port 3000 for external access.
+
+Metrics storage lives at `/opt/arma-server-data/prometheus` on the same EBS volume as game data. With intermittent usage patterns (weekend sessions), actual disk consumption stays minimal since Prometheus auto-purges data older than 15 days.
+
+### Disabling monitoring
+
+Set `monitoring.enabled: false` in `cluster-manifests/values-freedomfighters.yaml` and push to `main`. ArgoCD will prune all monitoring resources on the next sync.
+
 ## Connecting to the server
 
 - **Direct IP**: `<public_ip>:2001`
@@ -217,16 +247,17 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 | `providers.tf` | AWS provider and S3 backend config |
 | `backend-resources.tf` | S3 state bucket and DynamoDB lock table |
 | `networking.tf` | VPC, subnet, internet gateway, route table |
-| `security-groups.tf` | Game ports (UDP 2001, 1999) and conditional SSH |
+| `security-groups.tf` | Game ports (UDP 2001, 1999), Grafana (TCP 3000), and conditional SSH |
 | `compute.tf` | EC2 instance, EIP, bootstrap user_data |
 | `iam.tf` | IAM roles for SSM and ESO |
 | `secrets.tf` | Secrets Manager and SSM parameter resources |
-| `route53.tf` | DNS A record for `arma.imdancin.com` |
+| `route53.tf` | DNS A records for `arma.imdancin.com` and `grafana.imdancin.com` |
 | `vars.tf` | Variable declarations |
 | `outputs.tf` | Terraform outputs (instance ID, public IP) |
 | `cluster-manifests/` | Helm chart deployed by ArgoCD |
-| `cluster-manifests/values-freedomfighters.yaml` | Game config (scenario, mods, players) |
-| `tests/` | Property-based and unit tests for `main.py` |
+| `cluster-manifests/values-freedomfighters.yaml` | Game config (scenario, mods, players) and monitoring settings |
+| `cluster-manifests/templates/monitoring-*.yaml` | Prometheus, Grafana, kube-state-metrics, node-exporter manifests |
+| `tests/` | Property-based and structural tests for infrastructure and monitoring |
 | `bootstrap.ps1` | One-time backend setup (already run, kept for reference) |
 
 ## Known quirks
