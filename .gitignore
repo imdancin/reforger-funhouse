@@ -44,9 +44,12 @@ terraform.rc
 # Uncomment the line below if you want to ignore planout files.
 # planout
 
-#Editor stuff
+# Editor / tooling
 .kiro/*
 .hypothesis/*
+
+# Python virtual environment
+.venv/
 
 # SSH private key exclusions
 *.pem
@@ -58,3 +61,12 @@ arma_reforger_ed25519
 
 # Allow public keys to be tracked
 !*.pub
+
+# Python
+__pycache__/
+.pytest_cache/
+
+# Terraform plan outputs
+*.tfplan
+create.tfplan
+destroy.tfplan
