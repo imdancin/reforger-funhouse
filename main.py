@@ -5,10 +5,12 @@ import subprocess
 import sys
 import time
 import socket
+import webbrowser
 from pathlib import Path
 from typing import NoReturn
 
 import paramiko
+import yaml
 
 # ---------------------------------------------------------------------------
 # Configuration Constants
@@ -26,6 +28,8 @@ BOOTSTRAP_MARKER = "=== K3s, ArgoCD, and Arma Reforger Bootstrap Complete ==="
 POD_LABEL_SELECTOR = "app=arma-server"
 POD_CONTAINER_NAME = "reforger"
 LOG_FILE_PATH = "/var/log/cloud-init-output.log"
+VALUES_FILE_PATH = Path.cwd() / "cluster-manifests" / "values-freedomfighters.yaml"
+GRAFANA_PORT = 3000
 
 # ---------------------------------------------------------------------------
 # Global state for signal handler cleanup
@@ -341,6 +345,27 @@ class PodLogMonitor:
 
 
 # ---------------------------------------------------------------------------
+# Monitoring Helpers
+# ---------------------------------------------------------------------------
+
+def is_monitoring_enabled(values_path: Path = VALUES_FILE_PATH) -> bool:
+    """Check if monitoring is enabled in the Helm values file."""
+    try:
+        with open(values_path) as f:
+            values = yaml.safe_load(f)
+        return values.get("monitoring", {}).get("enabled", False)
+    except (FileNotFoundError, yaml.YAMLError):
+        return False
+
+
+def open_grafana(ip: str) -> None:
+    """Open the Grafana dashboard in the default browser."""
+    url = f"http://{ip}:{GRAFANA_PORT}"
+    print(f"Opening Grafana at {url}")
+    webbrowser.open(url)
+
+
+# ---------------------------------------------------------------------------
 # Entry Point
 # ---------------------------------------------------------------------------
 
@@ -356,6 +381,10 @@ def main() -> None:
 
     # Stage 3: Stream cloud-init logs until bootstrap marker detected
     StartupLogStreamer(client).stream_until_marker()
+
+    # Stage 3.5: Open Grafana in browser if monitoring is enabled
+    if is_monitoring_enabled():
+        open_grafana(ip)
 
     # Stage 4: Stream game server pod logs indefinitely
     PodLogMonitor(client).stream_logs()

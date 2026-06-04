@@ -233,6 +233,7 @@ sudo kubectl rollout restart deploy/arma-reforger
 |--------|---------|--------------|
 | Game password | AWS Secrets Manager | ExternalSecret → K8s Secret → env var |
 | Admin password | AWS Secrets Manager | ExternalSecret → K8s Secret → env var |
+| Grafana admin password | AWS Secrets MAnager | ExternalSecret → K8s Secret → env var |
 | RCON password | AWS Secrets Manager | ExternalSecret → K8s Secret → env var |
 | Public IP | SSM Parameter Store | ExternalSecret → K8s Secret → env var |
 | Active scenario | SSM Parameter Store | Read by bootstrap user_data |
