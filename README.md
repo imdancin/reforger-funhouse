@@ -1,181 +1,236 @@
 # Reforger Funhouse
 
-This repository contains Terraform and Kubernetes GitOps configuration for a dedicated Arma Reforger game server running on AWS.
+Terraform + Kubernetes GitOps infrastructure for a dedicated Arma Reforger game server on AWS. One command to launch, one command to tear down.
 
-## What this project does
+## How it works
 
-- provisions a single `c6i.xlarge` EC2 node in `us-west-2`
-- attaches a permanent 50GB `gp3` root volume with `delete_on_termination = false`
-- bootstraps K3s on the instance via `user_data`
-- installs ArgoCD and applies a GitOps `Application` resource
-- deploys an Arma Reforger game container through Helm-style manifests
+1. **Terraform** provisions a `c6i.xlarge` EC2 instance with a persistent 50GB EBS volume
+2. **User data** bootstraps K3s and ArgoCD on the instance
+3. **ArgoCD** pulls Helm manifests from this repo and deploys the game server pod
+4. **External Secrets Operator** injects passwords from AWS Secrets Manager into the pod at runtime
 
-## Security
+The game server runs inside a container (`ghcr.io/acemod/arma-reforger`) on the K3s cluster with `hostNetwork: true`, binding directly to the EC2 host's network interfaces.
 
-This repository is public. Secrets are managed as follows:
+## Prerequisites
 
-- **RCON/Game/Game Admin passwords** — Stored in aws secrets manager, held locally at `terraform.tfvars`.
-- **Server public IP** — written to SSM Parameter Store at `/arma-reforger/public-address` by Terraform at apply time. Never stored in version control.
-- **Active scenario** — stored in SSM Parameter Store at `/arma-reforger/active-scenario`. Read by the bootstrap script at runtime.
-- **`terraform.tfvars`** — excluded by `.gitignore` (`*.tfvars`). Never committed.
+- AWS account with SSO configured
+- AWS CLI configured with an SSO profile (e.g. `reforger-admin`)
+- Terraform installed
+- Python 3.13+ with [uv](https://docs.astral.sh/uv/) for the launch script
+- SSH key at `~/.ssh/id_ed25519` (public key set in `terraform.tfvars`)
+- A Route 53 hosted zone (optional, for custom DNS)
 
-Secrets are injected into the Kubernetes workload at runtime via [External Secrets Operator](https://external-secrets.io), which pulls values from Secrets Manager and SSM into Kubernetes Secrets. The game container references these via `secretKeyRef` — no plaintext values appear in any manifest.
+## Getting started (from scratch)
 
----
+If you're forking this to host your own server:
 
----
+### 1. Clone and install dependencies
 
-## Current known issues
-
-### 1. Backend state bucket
-
-The Terraform backend references `your-unique-arma-tfstate-bucket` in:
-
-- `providers.tf`
-- `backend-resources.tf`
-
-Note: In this environment the bucket name `your-unique-arma-tfstate-bucket` already exists and is currently storing Terraform state. You do not need to rename or recreate the bucket immediately — it is safe to continue using it.
-
-If you later decide to change the bucket name, follow these steps to migrate state safely:
-
-```powershell
-terraform init -migrate-state
+```bash
+git clone https://github.com/imdancin/reforger-funhouse.git
+cd reforger-funhouse
+uv sync
 ```
 
-Or, if you prefer to only reconfigure backend settings without moving state, use:
+### 2. Set up AWS
 
-```powershell
-terraform init -reconfigure
-```
+You need an AWS account with:
+- An IAM Identity Center (SSO) user or IAM user with admin-level access
+- AWS CLI configured: `aws configure sso` or static credentials
 
-### 2. ArgoCD repo access (public — no credentials required)
+### 3. Bootstrap the Terraform backend (one-time)
 
-The ArgoCD `Application` is configured to use:
-
-- `https://github.com/imdancin/reforger-funhouse.git`
-
-This repository is public, so ArgoCD can clone it without any credentials. No `argocd repo add` step is required after bootstrapping.
-
-### 3. `main` branch must be present and pushed
-
-The ArgoCD app uses:
-
-- `targetRevision: main`
-
-Make sure your `main` branch is pushed and contains `cluster-manifests/`.
-
-### 4. SSM instance registration may lag
-
-The bootstrap installs `amazon-ssm-agent`, but the instance must still successfully register with AWS Systems Manager before CLI commands will work.
-
-Use:
-
-```powershell
-aws ssm describe-instance-information --filters Key=InstanceIds,Values=<instance-id> --profile reforger-admin --region us-west-2
-```
-
-If the response is empty, the instance is not yet SSM-connected.
-
-## Helpful scripts
-
-### `bootstrap.ps1`
-
-This helper temporarily disables the S3 backend, creates the backend bucket and DynamoDB lock table locally, then migrates Terraform state to the cloud backend.
-
-Usage:
+This creates the S3 bucket and DynamoDB table for remote state:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
 ```
 
-### `install-argocd-cli.ps1`
+### 4. Create your `terraform.tfvars`
 
-Downloads a local `argocd.exe` binary for Windows. Useful for inspecting ArgoCD state or manually triggering syncs.
+```hcl
+instance_count    = 0          # start with 0, launch script sets to 1
+enable_custom_dns = true       # set false if you don't have a Route 53 zone
+domain_name       = "yourdomain.com"
 
-Usage:
+ssh_allowed_cidr = "YOUR.PUBLIC.IP/32"   # find at https://checkip.amazonaws.com
+ssh_public_key   = "ssh-ed25519 AAAA... your-email@example.com"
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\install-argocd-cli.ps1
+game_password       = "yourserverpassword"
+game_admin_password = "youradminpassword"
+rcon_password       = "yourrconpassword"
 ```
 
-Since this repository is public, ArgoCD can clone it without credentials — no `argocd repo add` step is needed after bootstrapping.
+### 5. Generate an SSH key (if you don't have one)
 
-### `add-argocd-portforward.ps1`
-
-Starts a local port-forward to the ArgoCD server so you can open the ArgoCD UI in your browser.
-
-Usage:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\add-argocd-portforward.ps1
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
 ```
 
-By default this forwards:
+Paste the contents of `~/.ssh/id_ed25519.pub` into `ssh_public_key` above.
 
-- `localhost:8080` -> `argocd-server:443`
+### 6. Create ESO IAM credentials in SSM
 
-Then visit:
+The External Secrets Operator needs AWS credentials to pull secrets at runtime. Create an IAM user with read access to Secrets Manager and SSM, then store the keys:
 
-```text
-https://localhost:8080
+```bash
+aws ssm put-parameter --name /arma-reforger/eso-access-key-id --value "AKIA..." --type String
+aws ssm put-parameter --name /arma-reforger/eso-secret-access-key --value "wJal..." --type SecureString
 ```
 
-## Deployment workflow
+### 7. Customize game settings
 
-### 1. Initialize backend
+Edit `cluster-manifests/values-freedomfighters.yaml` to set your scenario, mods, max players, etc.
 
-```powershell
-terraform init -reconfigure
+### 8. Initialize Terraform and launch
+
+```bash
+terraform init
+uv run python main.py
 ```
 
-### 2. Rotate the instance
+The script handles `terraform apply`, SSH connection, and log streaming automatically. First launch takes ~15 minutes (SteamCMD downloads ~10GB of game files).
 
-```powershell
+### 9. Update repo references
+
+In `compute.tf`, change the ArgoCD Application source to point to your fork:
+
+```yaml
+repoURL: 'https://github.com/YOUR-USER/reforger-funhouse.git'
+```
+
+## Quick start
+
+### Launch the server
+
+```bash
+uv run python main.py
+```
+
+This runs the full pipeline:
+1. `terraform apply -auto-approve` — provisions the EC2 instance
+2. Waits for SSH to become available on the instance
+3. Streams cloud-init bootstrap logs (K3s, ArgoCD, ESO installation)
+4. Waits for the game server pod to reach Running state
+5. Streams game server logs until you Ctrl+C
+
+### Tear down the server
+
+```bash
 terraform apply -var "instance_count=0" -auto-approve
-terraform apply -var "instance_count=1" -auto-approve
 ```
 
-### 3. Verify K3s + ArgoCD
+The EBS volume persists (game saves are kept). Next launch resumes from the existing save.
 
-Use the SSM command flow to verify the node and ArgoCD app once the instance is running.
+## Configuration
 
-Example validation steps:
+All sensitive values go in `terraform.tfvars` (gitignored):
 
-```powershell
-aws ssm describe-instance-information --filters Key=InstanceIds,Values=<instance-id> --profile reforger-admin --region us-west-2
+```hcl
+instance_count    = 1
+enable_custom_dns = true
+domain_name       = "imdancin.com"
+
+ssh_allowed_cidr = "YOUR.IP.HERE/32"
+ssh_public_key   = "ssh-ed25519 AAAA..."
+
+game_password       = "yourpassword"
+game_admin_password = "youradminpassword"
+rcon_password       = "yourrconpassword"
 ```
 
-Once the instance is visible in SSM, run:
+Game settings (scenario, mods, player count) are in `cluster-manifests/values-freedomfighters.yaml`.
 
-```powershell
-aws ssm send-command --instance-ids <instance-id> --document-name AWS-RunShellScript --comment "Check k3s and ArgoCD" --parameters commands="/usr/local/bin/kubectl get nodes && /usr/local/bin/kubectl get pods -n argocd && /usr/local/bin/kubectl get applications -n argocd" --profile reforger-admin --region us-west-2
+## Connecting to the server
+
+- **Direct IP**: `<public_ip>:2001`
+- **Join code**: printed in the server logs after startup
+- **DNS**: `arma.imdancin.com` resolves to the Elastic IP (note: Reforger's direct join UI only accepts IPs, not hostnames)
+
+## SSH access
+
+```bash
+ssh ubuntu@<public_ip>
 ```
 
-Then verify the game workload and local storage:
+SSH is only open when `ssh_allowed_cidr` is set in your tfvars. The security group rule is conditional.
 
-```powershell
-aws ssm send-command --instance-ids <instance-id> --document-name AWS-RunShellScript --parameters commands="/usr/local/bin/kubectl get pv,pvc && /usr/local/bin/kubectl get pods -n default" --profile reforger-admin --region us-west-2
+## Server administration
+
+### Check server status
+
+```bash
+ssh ubuntu@<public_ip>
+sudo kubectl get pods -l app=arma-server
+sudo kubectl logs -f -l app=arma-server -c reforger
 ```
 
-If the ArgoCD application is not syncing, check the ArgoCD UI or use `kubectl get applications -n argocd` to inspect sync status.
+### Force sync ArgoCD
+
+```bash
+sudo kubectl -n argocd patch app root-arma-app --type merge \
+  -p '{"operation":{"initiatedBy":{"username":"admin"},"sync":{"revision":"HEAD"}}}'
+```
+
+### Reset game save (fresh start)
+
+```bash
+# Delete the save data on the PVC
+sudo rm -rf /opt/arma-server-data/Profile/.db/FreedomFighters
+
+# Restart the pod to pick up a clean state
+sudo kubectl rollout restart deploy/arma-reforger
+```
+
+The server will start a new playthrough. Save data persists across instance stop/start cycles because the EBS volume has `delete_on_termination = false`.
+
+### Restart the game server pod
+
+```bash
+sudo kubectl rollout restart deploy/arma-reforger
+```
+
+## Data persistence
+
+- **EBS volume** (`delete_on_termination = false`) — survives instance termination
+- **PVC** mounts `/opt/arma-server-data` with subPaths for Configs, Profile, and Workshop
+- **`-loadSessionSave`** flag tells the server to resume from the last save on disk
+- Setting `instance_count = 0` destroys the instance but the volume (and saves) persist
+
+## Secrets management
+
+| Secret | Storage | Injected via |
+|--------|---------|--------------|
+| Game password | AWS Secrets Manager | ExternalSecret → K8s Secret → env var |
+| Admin password | AWS Secrets Manager | ExternalSecret → K8s Secret → env var |
+| RCON password | AWS Secrets Manager | ExternalSecret → K8s Secret → env var |
+| Public IP | SSM Parameter Store | ExternalSecret → K8s Secret → env var |
+| Active scenario | SSM Parameter Store | Read by bootstrap user_data |
+
+No secrets appear in version control. `terraform.tfvars` is gitignored.
 
 ## File layout
 
-- `providers.tf` — AWS provider and backend config
-- `backend-resources.tf` — S3 bucket and DynamoDB lock table
-- `networking.tf` — VPC, subnet, internet gateway, route table
-- `security-groups.tf` — game ports and network boundaries
-- `compute.tf` — EC2 instance definition and bootstrap user_data
-- `iam.tf` — EC2 IAM role/profile for SSM and GitHub Actions least-privilege policy
-- `secrets.tf` — Secrets Manager and SSM Parameter Store resource provisioning
-- `cluster-manifests/` — ArgoCD/Helm-style deployment manifests
-- `cluster-manifests/templates/external-secrets.yaml` — ESO SecretStore and ExternalSecret resources
-- `install-argocd-cli.ps1` — ArgoCD CLI helper
-- `add-argocd-repo.ps1` — private GitHub repo registration helper for ArgoCD
-- `bootstrap.ps1` — Terraform backend bootstrap helper
+| Path | Purpose |
+|------|---------|
+| `main.py` | Launch automation script (terraform → SSH → log streaming) |
+| `providers.tf` | AWS provider and S3 backend config |
+| `backend-resources.tf` | S3 state bucket and DynamoDB lock table |
+| `networking.tf` | VPC, subnet, internet gateway, route table |
+| `security-groups.tf` | Game ports (UDP 2001, 1999) and conditional SSH |
+| `compute.tf` | EC2 instance, EIP, bootstrap user_data |
+| `iam.tf` | IAM roles for SSM and ESO |
+| `secrets.tf` | Secrets Manager and SSM parameter resources |
+| `route53.tf` | DNS A record for `arma.imdancin.com` |
+| `vars.tf` | Variable declarations |
+| `outputs.tf` | Terraform outputs (instance ID, public IP) |
+| `cluster-manifests/` | Helm chart deployed by ArgoCD |
+| `cluster-manifests/values-freedomfighters.yaml` | Game config (scenario, mods, players) |
+| `tests/` | Property-based and unit tests for `main.py` |
+| `bootstrap.ps1` | One-time backend setup (already run, kept for reference) |
 
-## Notes
+## Known quirks
 
-- The game deployment uses `hostNetwork: true` so the container binds directly to the EC2 host network.
-- Game config values (`name`, `maxPlayers`, `scenarioId`, `modsList`) come from `cluster-manifests/values-freedomfighters.yaml`. Secrets (`rconPassword`, `publicAddress`) are injected at runtime via External Secrets Operator and are not present in the values file.
-- If you change the backend or repo URL, update both `providers.tf` and `backend-resources.tf` consistently.
+- **First launch is slow** (~15 min) — SteamCMD downloads ~10GB of game files. Subsequent launches reuse the cached files on the PVC.
+- **Navmesh warnings** in server logs are cosmetic — missing vehicle pathfinding tiles don't affect gameplay.
+- **ArgoCD syncs every 3 minutes** — push a change to `main` branch and wait, or force sync manually.
