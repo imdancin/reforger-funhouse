@@ -70,3 +70,6 @@ __pycache__/
 *.tfplan
 create.tfplan
 destroy.tfplan
+
+#Ignore tests
+tests/*
