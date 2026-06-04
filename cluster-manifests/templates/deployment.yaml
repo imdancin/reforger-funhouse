@@ -64,6 +64,18 @@ spec:
                   key: rcon-password
             - name: ARMA_PARAMS
               value: "-loadSessionSave"
+            - name: SERVER_VISIBLE
+              value: "{{ .Values.game.visible }}"
+            - name: GAME_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: arma-game-passwords
+                  key: game-password
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: arma-game-passwords
+                  key: game-admin-password
           volumeMounts:
             - name: config-vol
               mountPath: /reforger/Configs
