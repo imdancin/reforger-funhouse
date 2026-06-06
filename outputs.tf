@@ -8,3 +8,8 @@ output "arma_server_public_ip" {
   description = "The permanent static IP address players will use to connect to the server"
   value       = aws_eip.arma_static_ip.public_ip
 }
+
+output "game_data_volume_id" {
+  description = "The EBS volume ID for persistent game data (survives instance teardown)"
+  value       = aws_ebs_volume.game_data.id
+}

@@ -24,10 +24,10 @@ resource "aws_instance" "arma_server" {
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = 50
+    volume_size           = 20
     iops                  = 3000
     throughput            = 125
-    delete_on_termination = false # CRITICAL: Prevents data loss when instance_count = 0
+    delete_on_termination = true # Safe now — persistent data lives on the dedicated EBS volume
   }
 
   user_data = <<-EOF
@@ -89,12 +89,75 @@ resource "aws_instance" "arma_server" {
               AWS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
               LOCAL_IP=$(curl -s -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 
-              mkdir -p /opt/arma-server-data
-              mkdir -p /opt/arma-server-data/grafana
-              mkdir -p /opt/arma-server-data/prometheus
-              chown root:root /opt/arma-server-data
-              chmod 777 /opt/arma-server-data/grafana
-              chmod 777 /opt/arma-server-data/prometheus
+              # --- Mount dedicated EBS data volume at /opt/arma-server-data ---
+              DATA_DEVICE="/dev/xvdf"
+              DATA_MOUNT="/opt/arma-server-data"
+
+              # Wait for the EBS volume device to appear (Terraform attaches async)
+              echo "Waiting for data volume $DATA_DEVICE to appear..."
+              WAIT_START=$(date +%s)
+              while [ ! -b "$DATA_DEVICE" ]; do
+                sleep 2
+                ELAPSED=$(( $(date +%s) - WAIT_START ))
+                if [ "$ELAPSED" -gt 120 ]; then
+                  echo "ERROR: Data volume $DATA_DEVICE did not appear within 120s"
+                  exit 1
+                fi
+              done
+              echo "Data volume $DATA_DEVICE detected."
+
+              # Format only if no filesystem exists (first-time setup)
+              if ! blkid "$DATA_DEVICE" | grep -q 'TYPE='; then
+                echo "No filesystem found on $DATA_DEVICE — formatting as ext4..."
+                mkfs.ext4 -L arma-data "$DATA_DEVICE"
+              fi
+
+              # If data already exists on root disk, preserve it for migration
+              MIGRATION_NEEDED=false
+              if [ -d "$DATA_MOUNT" ] && [ "$(ls -A $DATA_MOUNT 2>/dev/null)" ]; then
+                echo "Existing data found at $DATA_MOUNT — will migrate to new volume."
+                MIGRATION_NEEDED=true
+                mv "$DATA_MOUNT" /tmp/arma-server-data-migration
+              fi
+
+              # Mount the dedicated volume
+              mkdir -p "$DATA_MOUNT"
+              mount "$DATA_DEVICE" "$DATA_MOUNT"
+
+              # Add to fstab for persistence across reboots (idempotent)
+              if ! grep -q "$DATA_DEVICE" /etc/fstab; then
+                echo "$DATA_DEVICE $DATA_MOUNT ext4 defaults,nofail 0 2" >> /etc/fstab
+              fi
+
+              # Migrate data from root volume to new EBS volume if needed
+              if [ "$MIGRATION_NEEDED" = true ]; then
+                echo "Migrating data to new volume..."
+                rsync -a /tmp/arma-server-data-migration/ "$DATA_MOUNT/"
+
+                # Verify migration — compare file counts and total size
+                SRC_COUNT=$(find /tmp/arma-server-data-migration -type f | wc -l)
+                DST_COUNT=$(find "$DATA_MOUNT" -type f | wc -l)
+                SRC_SIZE=$(du -sb /tmp/arma-server-data-migration | awk '{print $1}')
+                DST_SIZE=$(du -sb "$DATA_MOUNT" | awk '{print $1}')
+
+                echo "Migration verification:"
+                echo "  Source files: $SRC_COUNT | Destination files: $DST_COUNT"
+                echo "  Source size:  $SRC_SIZE bytes | Destination size: $DST_SIZE bytes"
+
+                if [ "$SRC_COUNT" -eq "$DST_COUNT" ] && [ "$SRC_SIZE" -eq "$DST_SIZE" ]; then
+                  echo "VERIFIED: All files migrated successfully."
+                  rm -rf /tmp/arma-server-data-migration
+                else
+                  echo "WARNING: Migration verification mismatch! Keeping source at /tmp/arma-server-data-migration for manual inspection."
+                fi
+              fi
+
+              # Ensure subdirectories exist with correct permissions
+              mkdir -p "$DATA_MOUNT/grafana"
+              mkdir -p "$DATA_MOUNT/prometheus"
+              chown root:root "$DATA_MOUNT"
+              chmod 777 "$DATA_MOUNT/grafana"
+              chmod 777 "$DATA_MOUNT/prometheus"
 
               # 6. Install Helm
               echo "Installing Helm..."
@@ -191,6 +254,42 @@ resource "aws_instance" "arma_server" {
   lifecycle {
     ignore_changes = [user_data]
   }
+}
+
+# Persistent game data volume — survives instance teardown independently
+resource "aws_ebs_volume" "game_data" {
+  availability_zone = "us-west-2a"
+  size              = var.data_volume_size
+  type              = "gp3"
+  iops              = 3000
+  throughput        = 125
+
+  tags = {
+    Name = "arma-game-data"
+  }
+}
+
+# Attach the data volume to the instance when it exists
+resource "aws_volume_attachment" "game_data_attach" {
+  count = var.instance_count
+
+  device_name = "/dev/xvdf"
+  volume_id   = aws_ebs_volume.game_data.id
+  instance_id = aws_instance.arma_server[0].id
+
+  # Prevent Terraform from force-detaching during destroy
+  force_detach = false
+}
+
+# Temporary attachment of legacy root volume for data recovery (remove after migration)
+resource "aws_volume_attachment" "legacy_volume_attach" {
+  count = var.legacy_volume_id != "" ? var.instance_count : 0
+
+  device_name = "/dev/xvdg"
+  volume_id   = var.legacy_volume_id
+  instance_id = aws_instance.arma_server[0].id
+
+  force_detach = false
 }
 
 # Dynamic binding linking the static IP to the instance when it exists

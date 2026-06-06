@@ -17,6 +17,18 @@ variable "domain_name" {
   description = "The registered domain name managed by Route 53 (e.g. imdancin.com)"
 }
 
+variable "data_volume_size" {
+  type        = number
+  default     = 20
+  description = "Size in GB for the persistent game data EBS volume (can be increased, never decreased)"
+}
+
+variable "legacy_volume_id" {
+  type        = string
+  default     = ""
+  description = "Volume ID of the old root volume to temporarily attach for data recovery. Set empty to skip."
+}
+
 variable "ssh_allowed_cidr" {
   description = "IPv4 CIDR block to allow SSH access from (e.g., 203.0.113.5/32). Leave empty to disable SSH ingress."
   type        = string
