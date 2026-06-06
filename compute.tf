@@ -90,7 +90,11 @@ resource "aws_instance" "arma_server" {
               LOCAL_IP=$(curl -s -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 
               mkdir -p /opt/arma-server-data
+              mkdir -p /opt/arma-server-data/grafana
+              mkdir -p /opt/arma-server-data/prometheus
               chown root:root /opt/arma-server-data
+              chmod 777 /opt/arma-server-data/grafana
+              chmod 777 /opt/arma-server-data/prometheus
 
               # 6. Install Helm
               echo "Installing Helm..."
@@ -182,6 +186,10 @@ resource "aws_instance" "arma_server" {
 
   tags = {
     Name = "arma-reforger-compute"
+  }
+
+  lifecycle {
+    ignore_changes = [user_data]
   }
 }
 

@@ -146,6 +146,7 @@ class SSHMonitor:
         """
         global _ssh_client
 
+        self._remove_stale_host_key()
         self._wait_for_port()
 
         client = paramiko.SSHClient()
@@ -169,6 +170,24 @@ class SSHMonitor:
 
         _ssh_client = client
         return client
+
+    def _remove_stale_host_key(self) -> None:
+        """Remove any existing known_hosts entry for this host to avoid conflicts."""
+        known_hosts_path = Path.home() / ".ssh" / "known_hosts"
+        if not known_hosts_path.exists():
+            return
+
+        try:
+            lines = known_hosts_path.read_text(encoding="utf-8").splitlines(keepends=True)
+            filtered = [
+                line for line in lines
+                if not line.startswith(self.host + " ") and not line.startswith(self.host + ",")
+            ]
+            if len(filtered) != len(lines):
+                known_hosts_path.write_text("".join(filtered), encoding="utf-8")
+                print(f"Removed stale known_hosts entry for {self.host}")
+        except OSError as exc:
+            print(f"Warning: Could not clean known_hosts: {exc}")
 
     def _wait_for_port(self) -> None:
         """TCP socket poll loop with status messages."""

@@ -153,7 +153,8 @@ resource "aws_iam_user_policy" "eso_reader_policy" {
         Resource = [
           "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/game-rcon-password*",
           "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/game-password*",
-          "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/game-admin-password*"
+          "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/game-admin-password*",
+          "arn:aws:secretsmanager:us-west-2:*:secret:/arma-reforger/grafana-admin-password*"
         ]
       },
       {
