@@ -90,21 +90,39 @@ resource "aws_instance" "arma_server" {
               LOCAL_IP=$(curl -s -H "X-aws-ec2-metadata-token: $AWS_TOKEN" http://169.254.169.254/latest/meta-data/local-ipv4)
 
               # --- Mount dedicated EBS data volume at /opt/arma-server-data ---
-              DATA_DEVICE="/dev/xvdf"
               DATA_MOUNT="/opt/arma-server-data"
 
-              # Wait for the EBS volume device to appear (Terraform attaches async)
-              echo "Waiting for data volume $DATA_DEVICE to appear..."
+              # Resolve the data volume device — Nitro instances use /dev/nvme*
+              # The Terraform-attached volume appears as /dev/xvdf in the API but
+              # maps to an NVMe device on c6i/c5/m5/etc. Use nvme id-ctrl to find it.
+              echo "Locating data volume device..."
+              DATA_DEVICE=""
               WAIT_START=$(date +%s)
-              while [ ! -b "$DATA_DEVICE" ]; do
-                sleep 2
-                ELAPSED=$(( $(date +%s) - WAIT_START ))
-                if [ "$ELAPSED" -gt 120 ]; then
-                  echo "ERROR: Data volume $DATA_DEVICE did not appear within 120s"
-                  exit 1
+              while [ -z "$DATA_DEVICE" ]; do
+                # Look for NVMe devices that map to the xvdf attachment
+                for dev in /dev/nvme*n1; do
+                  [ -b "$dev" ] || continue
+                  # Skip the root device
+                  if lsblk "$dev" | grep -q '/$'; then
+                    continue
+                  fi
+                  # Skip devices with partition tables (legacy root volumes)
+                  if lsblk -n "$dev" | grep -q 'part'; then
+                    continue
+                  fi
+                  DATA_DEVICE="$dev"
+                  break
+                done
+                if [ -z "$DATA_DEVICE" ]; then
+                  sleep 2
+                  ELAPSED=$(( $(date +%s) - WAIT_START ))
+                  if [ "$ELAPSED" -gt 120 ]; then
+                    echo "ERROR: Data volume device not found within 120s"
+                    exit 1
+                  fi
                 fi
               done
-              echo "Data volume $DATA_DEVICE detected."
+              echo "Data volume detected at $DATA_DEVICE"
 
               # Format only if no filesystem exists (first-time setup)
               if ! blkid "$DATA_DEVICE" | grep -q 'TYPE='; then
