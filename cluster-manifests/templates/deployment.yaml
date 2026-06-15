@@ -82,8 +82,8 @@ spec:
               mountPath: /home/profile
               subPath: Profile
             - name: workshop-vol
-              mountPath: /reforger/Workshop
-              subPath: Workshop
+              mountPath: /reforger/workshop
+              subPath: workshop
       volumes:
         - name: config-vol
           persistentVolumeClaim:
