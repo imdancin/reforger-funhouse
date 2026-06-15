@@ -18,7 +18,6 @@ spec:
       containers:
         - name: reforger
           image: ghcr.io/acemod/arma-reforger:latest
-          workingDir: /reforger
           ports:
             - containerPort: 2001
               protocol: UDP
@@ -75,22 +74,16 @@ spec:
                   name: arma-game-passwords
                   key: game-admin-password
           volumeMounts:
-            - name: config-vol
-              mountPath: /reforger/Configs
-              subPath: Configs
+            - name: reforger-vol
+              mountPath: /reforger
+              subPath: reforger
             - name: profile-vol
               mountPath: /home/profile
               subPath: Profile
-            - name: workshop-vol
-              mountPath: /reforger/workshop
-              subPath: workshop
       volumes:
-        - name: config-vol
+        - name: reforger-vol
           persistentVolumeClaim:
             claimName: arma-game-pvc
         - name: profile-vol
-          persistentVolumeClaim:
-            claimName: arma-game-pvc
-        - name: workshop-vol
           persistentVolumeClaim:
             claimName: arma-game-pvc
