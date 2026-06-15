@@ -251,7 +251,7 @@ resource "aws_instance" "arma_server" {
                   path: cluster-manifests
                   helm:
                     valueFiles:
-                      - $(aws ssm get-parameter --name /arma-reforger/active-scenario --query Parameter.Value --output text)
+                      - ${var.active_scenario}
                 destination:
                   server: 'https://kubernetes.default.svc'
                   namespace: default

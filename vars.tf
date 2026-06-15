@@ -29,6 +29,12 @@ variable "legacy_volume_id" {
   description = "Volume ID of the old root volume to temporarily attach for data recovery. Set empty to skip."
 }
 
+variable "active_scenario" {
+  type        = string
+  default     = "values-freedomfighters.yaml"
+  description = "Helm values file in cluster-manifests/ that defines the active game scenario"
+}
+
 variable "ssh_allowed_cidr" {
   description = "IPv4 CIDR block to allow SSH access from (e.g., 203.0.113.5/32). Leave empty to disable SSH ingress."
   type        = string
