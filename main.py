@@ -140,7 +140,9 @@ class SSHMonitor:
 
     def connect(self) -> paramiko.SSHClient:
         """
-        Poll port 22 until reachable, then establish SSH connection.
+        Poll port 22 until reachable, then establish SSH connection with
+        retry logic for authentication (cloud-init may not have written the
+        authorized_keys file yet).
         Returns connected SSHClient.
         Raises SystemExit on timeout or auth failure.
         """
@@ -149,27 +151,49 @@ class SSHMonitor:
         self._remove_stale_host_key()
         self._wait_for_port()
 
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-
         try:
             private_key = paramiko.Ed25519Key.from_private_key_file(str(self.key_path))
         except FileNotFoundError:
             print(f"Error: SSH key file not found: {self.key_path}")
             sys.exit(1)
 
-        try:
-            client.connect(
-                hostname=self.host,
-                username=self.username,
-                pkey=private_key,
-            )
-        except paramiko.AuthenticationException:
-            print(f"Error: SSH authentication failed for {self.username}@{self.host}")
-            sys.exit(1)
+        start_time = time.time()
 
-        _ssh_client = client
-        return client
+        while True:
+            elapsed = time.time() - start_time
+
+            if elapsed > self.timeout:
+                print(
+                    f"Error: SSH authentication failed for {self.username}@{self.host} "
+                    f"after {elapsed:.1f}s — cloud-init may not have provisioned the key"
+                )
+                sys.exit(1)
+
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+            try:
+                client.connect(
+                    hostname=self.host,
+                    username=self.username,
+                    pkey=private_key,
+                    timeout=10,
+                )
+                _ssh_client = client
+                return client
+            except paramiko.AuthenticationException:
+                print(
+                    f"SSH auth attempt failed (elapsed {elapsed:.1f}s) — "
+                    f"waiting for cloud-init to provision key..."
+                )
+                client.close()
+                time.sleep(self.retry_interval)
+            except (paramiko.SSHException, socket.error, OSError) as exc:
+                print(
+                    f"SSH connection attempt failed (elapsed {elapsed:.1f}s): {exc} — retrying..."
+                )
+                client.close()
+                time.sleep(self.retry_interval)
 
     def _remove_stale_host_key(self) -> None:
         """Remove any existing known_hosts entry for this host to avoid conflicts."""
