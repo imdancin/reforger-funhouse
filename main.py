@@ -30,6 +30,7 @@ POD_CONTAINER_NAME = "reforger"
 LOG_FILE_PATH = "/var/log/cloud-init-output.log"
 VALUES_FILE_PATH = Path.cwd() / "cluster-manifests" / "values-freedomfighters.yaml"
 GRAFANA_PORT = 3000
+TFVARS_PATH = Path.cwd() / "terraform.tfvars"
 
 # ---------------------------------------------------------------------------
 # Global state for signal handler cleanup
@@ -388,6 +389,26 @@ class PodLogMonitor:
 
 
 # ---------------------------------------------------------------------------
+# Terraform Variable Helpers
+# ---------------------------------------------------------------------------
+
+def get_instance_count(tfvars_path: Path = TFVARS_PATH) -> int:
+    """Parse instance_count from terraform.tfvars. Returns 0 if not found or unparseable."""
+    try:
+        for line in tfvars_path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if "instance_count" in stripped:
+                # Handle lines like: instance_count = 0
+                value = stripped.split("=", 1)[1].strip().rstrip(",")
+                return int(value)
+    except (FileNotFoundError, ValueError, IndexError):
+        pass
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Monitoring Helpers
 # ---------------------------------------------------------------------------
 
@@ -418,6 +439,12 @@ def main() -> None:
 
     # Stage 1: Terraform apply — provision infrastructure and extract server IP
     ip = TerraformRunner(Path.cwd()).run()
+
+    # Exit early if instance_count is 0 (teardown only, no server to connect to)
+    instance_count = get_instance_count()
+    if instance_count == 0:
+        print("instance_count is 0 — infrastructure torn down. Nothing to connect to.")
+        sys.exit(0)
 
     # Stage 2: SSH connection — wait for instance and establish session
     client = SSHMonitor(ip).connect()
