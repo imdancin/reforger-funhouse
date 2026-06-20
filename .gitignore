@@ -65,6 +65,7 @@ arma_reforger_ed25519
 # Python
 __pycache__/
 .pytest_cache/
+*.egg-info/
 
 # Terraform plan outputs
 *.tfplan

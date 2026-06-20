@@ -247,7 +247,7 @@ resource "aws_instance" "arma_server" {
                 project: default
                 source:
                   repoURL: 'https://github.com/imdancin/reforger-funhouse.git'
-                  targetRevision: main
+                  targetRevision: feat/discord-server-launch
                   path: cluster-manifests
                   helm:
                     valueFiles:
