@@ -1,0 +1,18 @@
+{{- if .Values.idleMonitor.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: idle-monitor-metrics
+  namespace: default
+  labels:
+    app: idle-monitor
+spec:
+  type: ClusterIP
+  selector:
+    app: idle-monitor
+  ports:
+    - port: {{ .Values.idleMonitor.metricsPort }}
+      targetPort: {{ .Values.idleMonitor.metricsPort }}
+      protocol: TCP
+      name: metrics
+{{- end }}
