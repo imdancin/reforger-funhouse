@@ -18,6 +18,9 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from discord_control_plane.adapters.allowlist_loader import load_allowlist
+from discord_control_plane.adapters import discord_messaging
+from discord_control_plane.adapters.state_store import StateStore
 from discord_control_plane.core.authorization import is_authorized
 from discord_control_plane.core.launch import decide_launch
 from discord_control_plane.core.models import (
@@ -36,6 +39,10 @@ from discord_control_plane.core.responses import (
     build_pong_response,
 )
 from discord_control_plane.core.verification import verify_signature
+from discord_control_plane.handlers.status_handler import handle_status
+
+
+_JSON_HEADERS = {"Content-Type": "application/json"}
 
 
 def _serialize_response(response) -> dict[str, Any]:
@@ -94,7 +101,7 @@ def handle_interaction(
     interaction_type = interaction.get("type")
     if interaction_type == 1:  # PING
         pong = build_pong_response()
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(pong))}
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(pong))}
 
     # 3. Load allowlist
     try:
@@ -103,7 +110,7 @@ def handle_interaction(
         error_resp = build_error_response(
             "Configuration error: unable to load authorization data."
         )
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(error_resp))}
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(error_resp))}
 
     # 4. Authorize
     member = interaction.get("member", {})
@@ -112,7 +119,7 @@ def handle_interaction(
 
     if not is_authorized(user_id, role_ids, allowlist):
         denial = build_denial_response()
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(denial))}
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(denial))}
 
     # 5. Resolve preset
     options = interaction.get("data", {}).get("options", [])
@@ -125,7 +132,7 @@ def handle_interaction(
     resolution = resolve_preset(requested_preset)
     if resolution.status == PresetResolutionStatus.ERROR:
         error_resp = build_error_response(resolution.error_message or "Unknown preset")
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(error_resp))}
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(error_resp))}
 
     # 6. Conditional state transition OFFLINE → LAUNCHING
     current_record = state_store.get_state()
@@ -145,7 +152,7 @@ def handle_interaction(
             content = "A teardown is currently in progress. Please try again shortly."
 
         error_resp = build_error_response(content)
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(error_resp))}
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(error_resp))}
 
     # Attempt the conditional write
     interaction_token = interaction.get("token", "")
@@ -165,7 +172,7 @@ def handle_interaction(
     if transition_result.status.value == "CONFLICT":
         content = f"Server is currently {transition_result.record.state.value}."
         error_resp = build_error_response(content)
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(error_resp))}
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(error_resp))}
 
     # 7. Post "launch started" message to the originating channel
     discord_messenger.post_followup(
@@ -189,7 +196,7 @@ def handle_interaction(
 
     # 9. Return deferred ack (type 5) within 3 seconds
     deferred = build_deferred_response()
-    return {"statusCode": 200, "body": json.dumps(_serialize_response(deferred))}
+    return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(deferred))}
 
 
 # ---------------------------------------------------------------------------
@@ -200,8 +207,9 @@ def handle_interaction(
 def lambda_handler(event: dict, context) -> dict[str, Any]:
     """AWS Lambda handler for the Launch_Handler.
 
-    Handles PING/PONG immediately for fast Discord endpoint verification,
-    then lazily loads heavy dependencies only for command interactions.
+    All heavy imports (boto3, etc.) happen at module level so they occur
+    during Lambda INIT — which is NOT counted against Discord's 3-second
+    interaction response deadline.
 
     Args:
         event: API Gateway v2.0 payload.
@@ -228,7 +236,7 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     else:
         body = body_str.encode("utf-8") if isinstance(body_str, str) else body_str
 
-    # --- Fast path: verify signature and handle PING before heavy imports ---
+    # Verify signature
     if not signature or not timestamp:
         return {"statusCode": 401, "body": "Invalid signature"}
 
@@ -240,32 +248,24 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {"statusCode": 401, "body": "Invalid body"}
 
-    # PING → PONG (no heavy deps needed)
+    # PING → PONG
     if interaction.get("type") == 1:
         pong = build_pong_response()
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(pong))}
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(pong))}
 
-    # --- Slow path: load adapters only for actual commands ---
-    from discord_control_plane.adapters.allowlist_loader import load_allowlist
-    from discord_control_plane.adapters import discord_messaging
-    from discord_control_plane.adapters.state_store import StateStore
-
+    # --- Command routing ---
     table_name = os.environ.get("STATE_TABLE_NAME", "arma-server-state")
     orchestrator_arn = os.environ.get("ORCHESTRATOR_ARN", "")
     application_id = os.environ.get("DISCORD_APPLICATION_ID", "")
 
-    # Build dependencies
     state_store = StateStore(table_name=table_name)
-
-    # --- Command routing ---
     command_name = interaction.get("data", {}).get("name", "")
 
+    # /status — read-only, no auth needed
     if command_name == "status":
-        from discord_control_plane.handlers.status_handler import handle_status
-
         return handle_status(state_store=state_store)
 
-    # --- /launch command flow ---
+    # /launch — full auth + orchestration flow
     class _MessengerAdapter:
         def post_followup(self, app_id, token, content):
             discord_messaging.post_followup(app_id, token, content)

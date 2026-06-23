@@ -68,7 +68,11 @@ def handle_status(*, state_store) -> dict[str, Any]:
         error_resp = build_error_response(
             "Unable to retrieve server status. Please try again later."
         )
-        return {"statusCode": 200, "body": json.dumps(_serialize_response(error_resp))}
+        return {
+            "statusCode": 200,
+            "headers": {"Content-Type": "application/json"},
+            "body": json.dumps(_serialize_response(error_resp)),
+        }
 
     status_reply = build_status_reply(record)
     emoji = _STATE_EMOJI.get(status_reply.state, "❓")
@@ -100,4 +104,8 @@ def handle_status(*, state_store) -> dict[str, Any]:
         type=InteractionResponseType.CHANNEL_MESSAGE,
         content=content,
     )
-    return {"statusCode": 200, "body": json.dumps(_serialize_response(response))}
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(_serialize_response(response)),
+    }
