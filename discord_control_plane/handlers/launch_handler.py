@@ -214,7 +214,7 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     import os
 
     from discord_control_plane.adapters.allowlist_loader import load_allowlist
-    from discord_control_plane.adapters.discord_messaging import DiscordMessenger
+    from discord_control_plane.adapters import discord_messaging
     from discord_control_plane.adapters.state_store import StateStore
 
     public_key_hex = os.environ["DISCORD_PUBLIC_KEY"]
@@ -237,7 +237,13 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
 
     # Build dependencies
     state_store = StateStore(table_name=table_name)
-    discord_messenger = DiscordMessenger()
+
+    # Wrap the module functions as an object with a post_followup method
+    class _MessengerAdapter:
+        def post_followup(self, app_id, token, content):
+            discord_messaging.post_followup(app_id, token, content)
+
+    discord_messenger = _MessengerAdapter()
 
     def step_functions_starter(input_data: dict):
         import boto3
