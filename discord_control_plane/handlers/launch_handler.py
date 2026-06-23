@@ -200,8 +200,8 @@ def handle_interaction(
 def lambda_handler(event: dict, context) -> dict[str, Any]:
     """AWS Lambda handler for the Launch_Handler.
 
-    Wires up dependencies from environment variables and invokes the
-    core handle_interaction logic.
+    Handles PING/PONG immediately for fast Discord endpoint verification,
+    then lazily loads heavy dependencies only for command interactions.
 
     Args:
         event: API Gateway v2.0 payload.
@@ -213,14 +213,7 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     import base64
     import os
 
-    from discord_control_plane.adapters.allowlist_loader import load_allowlist
-    from discord_control_plane.adapters import discord_messaging
-    from discord_control_plane.adapters.state_store import StateStore
-
     public_key_hex = os.environ["DISCORD_PUBLIC_KEY"]
-    table_name = os.environ.get("STATE_TABLE_NAME", "arma-server-state")
-    orchestrator_arn = os.environ.get("ORCHESTRATOR_ARN", "")
-    application_id = os.environ.get("DISCORD_APPLICATION_ID", "")
 
     # Extract signature and timestamp from headers
     headers = event.get("headers", {})
@@ -235,10 +228,35 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     else:
         body = body_str.encode("utf-8") if isinstance(body_str, str) else body_str
 
+    # --- Fast path: verify signature and handle PING before heavy imports ---
+    if not signature or not timestamp:
+        return {"statusCode": 401, "body": "Invalid signature"}
+
+    if not verify_signature(public_key_hex, signature, timestamp, body):
+        return {"statusCode": 401, "body": "Invalid signature"}
+
+    try:
+        interaction = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {"statusCode": 401, "body": "Invalid body"}
+
+    # PING → PONG (no heavy deps needed)
+    if interaction.get("type") == 1:
+        pong = build_pong_response()
+        return {"statusCode": 200, "body": json.dumps(_serialize_response(pong))}
+
+    # --- Slow path: load adapters only for actual commands ---
+    from discord_control_plane.adapters.allowlist_loader import load_allowlist
+    from discord_control_plane.adapters import discord_messaging
+    from discord_control_plane.adapters.state_store import StateStore
+
+    table_name = os.environ.get("STATE_TABLE_NAME", "arma-server-state")
+    orchestrator_arn = os.environ.get("ORCHESTRATOR_ARN", "")
+    application_id = os.environ.get("DISCORD_APPLICATION_ID", "")
+
     # Build dependencies
     state_store = StateStore(table_name=table_name)
 
-    # Wrap the module functions as an object with a post_followup method
     class _MessengerAdapter:
         def post_followup(self, app_id, token, content):
             discord_messaging.post_followup(app_id, token, content)
