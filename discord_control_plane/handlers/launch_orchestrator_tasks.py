@@ -17,6 +17,8 @@ import logging
 import os
 import socket
 
+import boto3
+
 from discord_control_plane.adapters.discord_messaging import post_followup
 from discord_control_plane.adapters.github_dispatch import dispatch_apply
 from discord_control_plane.adapters.scenario_store import write_active_scenario
@@ -65,6 +67,21 @@ def handle_dispatch_apply(event: dict, context=None) -> dict:
     Returns the event dict (pass-through for next state).
     """
     preset = event.get("preset", "")
+
+    # Reset bootstrap-status to prevent stale "ready" from a prior cycle
+    ssm = boto3.client("ssm")
+    try:
+        ssm.put_parameter(
+            Name="/arma-reforger/bootstrap-status",
+            Value="provisioning",
+            Type="String",
+            Overwrite=True,
+        )
+    except Exception as exc:
+        logger.error("Failed to reset bootstrap-status: %s", exc)
+        raise RuntimeError(f"Failed to reset bootstrap-status: {exc}") from exc
+    logger.info("Reset bootstrap-status to provisioning")
+
     dispatch_apply(instance_count=1, active_scenario=preset)
     logger.info("GitHub dispatch sent: instance_count=1, scenario=%s", preset)
     return event
@@ -95,8 +112,6 @@ def handle_check_ready(event: dict, context=None) -> dict:
     Reads bootstrap-status from SSM and probes the game port on the
     public IP. Returns {"ready": True/False, ...event}.
     """
-    import boto3
-
     ssm = boto3.client("ssm")
 
     # Check bootstrap status
@@ -114,7 +129,7 @@ def handle_check_ready(event: dict, context=None) -> dict:
         public_ip = None
 
     # Evaluate readiness
-    bootstrap_ready = bootstrap_status == "ready"
+    bootstrap_ready = bootstrap_status.startswith("ready")
     port_reachable = _probe_port(public_ip, 2001) if public_ip else False
     server_ready = is_ready(bootstrap_ready, port_reachable)
 
