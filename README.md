@@ -343,19 +343,22 @@ aws ssm put-parameter \
 
 You can find user IDs by enabling Developer Mode in Discord (Settings → Advanced) and right-clicking a user.
 
-#### 4. Register the slash command
+#### 4. Register the slash commands
 
 Run the registration script (one-time, or after updating presets):
 
 ```bash
 uv run python -c "
-from discord_control_plane.handlers.registration import build_launch_command_payload
+from discord_control_plane.handlers.registration import build_launch_command_payload, build_status_command_payload
 import json
+print('=== /launch ===')
 print(json.dumps(build_launch_command_payload(), indent=2))
+print('=== /status ===')
+print(json.dumps(build_status_command_payload(), indent=2))
 "
 ```
 
-POST the output to `https://discord.com/api/v10/applications/{APP_ID}/commands` with your bot token as a Bearer header. Or use a tool like `curl`:
+POST each command payload to `https://discord.com/api/v10/applications/{APP_ID}/commands` with your bot token as a Bearer header. Or use a tool like `curl`:
 
 ```bash
 curl -X POST "https://discord.com/api/v10/applications/YOUR_APP_ID/commands" \

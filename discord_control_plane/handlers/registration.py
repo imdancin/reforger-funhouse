@@ -1,8 +1,8 @@
 """Slash-command registration payload builder.
 
-Produces the JSON-serializable payload required by the Discord
-`POST /applications/{app_id}/commands` endpoint to register the
-/launch command with a Preset selection option.
+Produces the JSON-serializable payloads required by the Discord
+`POST /applications/{app_id}/commands` endpoint to register
+slash commands (/launch, /status).
 
 This module is a pure payload builder — it does not perform HTTP calls.
 """
@@ -55,4 +55,24 @@ def build_launch_command_payload(
                 "choices": choices,
             }
         ],
+    }
+
+
+def build_status_command_payload() -> dict:
+    """Build the Discord slash-command registration payload for /status.
+
+    The /status command has no options — it simply reports the current
+    server lifecycle state and connection details when available.
+
+    Returns
+    -------
+    dict
+        A JSON-serializable dictionary conforming to Discord's
+        Create Global Application Command request body.
+    """
+    return {
+        "name": "status",
+        "description": "Check the current Arma Reforger server status",
+        "type": 1,  # CHAT_INPUT
+        "options": [],
     }

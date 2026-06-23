@@ -257,6 +257,15 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     # Build dependencies
     state_store = StateStore(table_name=table_name)
 
+    # --- Command routing ---
+    command_name = interaction.get("data", {}).get("name", "")
+
+    if command_name == "status":
+        from discord_control_plane.handlers.status_handler import handle_status
+
+        return handle_status(state_store=state_store)
+
+    # --- /launch command flow ---
     class _MessengerAdapter:
         def post_followup(self, app_id, token, content):
             discord_messaging.post_followup(app_id, token, content)
