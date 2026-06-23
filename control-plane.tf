@@ -16,6 +16,12 @@ variable "discord_app_public_key" {
   sensitive   = true
 }
 
+variable "discord_app_id" {
+  type        = string
+  description = "Discord application ID for API follow-up messages"
+  default     = "1518838964323352637"
+}
+
 variable "launch_timeout_seconds" {
   type        = number
   default     = 600
@@ -196,17 +202,40 @@ resource "aws_lambda_function" "launch_handler" {
   filename         = data.archive_file.lambda_placeholder.output_path
   source_code_hash = data.archive_file.lambda_placeholder.output_base64sha256
 
+  snap_start {
+    apply_on = "PublishedVersions"
+  }
+
   environment {
     variables = {
-      DISCORD_PUBLIC_KEY     = var.discord_app_public_key
-      STATE_TABLE_NAME       = aws_dynamodb_table.arma_server_state.name
-      ORCHESTRATOR_ARN       = aws_sfn_state_machine.launch_orchestrator.arn
-      LAUNCH_TIMEOUT_SECONDS = tostring(var.launch_timeout_seconds)
+      DISCORD_PUBLIC_KEY      = var.discord_app_public_key
+      DISCORD_APPLICATION_ID  = var.discord_app_id
+      STATE_TABLE_NAME        = aws_dynamodb_table.arma_server_state.name
+      ORCHESTRATOR_ARN        = aws_sfn_state_machine.launch_orchestrator.arn
+      LAUNCH_TIMEOUT_SECONDS  = tostring(var.launch_timeout_seconds)
     }
+  }
+
+  timeouts {
+    create = "5m"
+    update = "5m"
   }
 
   tags = {
     Name = "arma-launch-handler"
+  }
+}
+
+# The 'live' alias is created and managed by deploy_lambdas.py after deploying
+# real code and publishing a SnapStart-optimized version.
+# Terraform only manages the alias if it already exists.
+resource "aws_lambda_alias" "launch_handler_live" {
+  name             = "live"
+  function_name    = aws_lambda_function.launch_handler.function_name
+  function_version = "$LATEST"
+
+  lifecycle {
+    ignore_changes = [function_version]
   }
 }
 
@@ -524,7 +553,7 @@ resource "aws_apigatewayv2_stage" "default" {
 resource "aws_apigatewayv2_integration" "launch_handler" {
   api_id                 = aws_apigatewayv2_api.control_plane.id
   integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.launch_handler.invoke_arn
+  integration_uri        = aws_lambda_alias.launch_handler_live.invoke_arn
   integration_method     = "POST"
   payload_format_version = "2.0"
 }
@@ -535,11 +564,12 @@ resource "aws_apigatewayv2_route" "post_interactions" {
   target    = "integrations/${aws_apigatewayv2_integration.launch_handler.id}"
 }
 
-# Grant API Gateway permission to invoke the Launch_Handler Lambda
+# Grant API Gateway permission to invoke the Launch_Handler Lambda alias
 resource "aws_lambda_permission" "apigw_invoke_launch_handler" {
   statement_id  = "AllowAPIGatewayInvoke"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.launch_handler.function_name
+  qualifier     = aws_lambda_alias.launch_handler_live.name
   principal     = "apigateway.amazonaws.com"
   source_arn    = "${aws_apigatewayv2_api.control_plane.execution_arn}/*/*"
 }

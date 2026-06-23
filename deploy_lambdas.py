@@ -145,7 +145,23 @@ def deploy(profile: str | None, region: str) -> None:
                 FunctionName=function_name,
                 Handler=handler,
             )
-            print("OK")
+            waiter.wait(FunctionName=function_name)
+
+            # Publish a new version and update the 'live' alias for SnapStart functions
+            if function_name == "arma-launch-handler":
+                version_resp = client.publish_version(
+                    FunctionName=function_name,
+                    Description="Deployed via deploy_lambdas.py",
+                )
+                new_version = version_resp["Version"]
+                client.update_alias(
+                    FunctionName=function_name,
+                    Name="live",
+                    FunctionVersion=new_version,
+                )
+                print(f"OK (v{new_version}, SnapStart)")
+            else:
+                print("OK")
             successes += 1
         except client.exceptions.ResourceNotFoundException:
             print("NOT FOUND (run terraform apply first)")

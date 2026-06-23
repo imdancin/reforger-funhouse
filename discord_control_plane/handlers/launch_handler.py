@@ -174,14 +174,8 @@ def handle_interaction(
         error_resp = build_error_response(content)
         return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(error_resp))}
 
-    # 7. Post "launch started" message to the originating channel
-    discord_messenger.post_followup(
-        application_id,
-        interaction_token,
-        f"🚀 Launch started! Deploying with preset: {resolution.preset.display_name}",
-    )
-
-    # 8. Start the LaunchOrchestrator Step Functions execution
+    # 7. Start the LaunchOrchestrator Step Functions execution
+    #    The orchestrator handles sending notifications to Discord.
     try:
         step_functions_starter(
             input_data={
@@ -190,11 +184,10 @@ def handle_interaction(
                 "channel_id": channel_id,
             }
         )
-    except Exception:
-        # Non-fatal for the ack — the user will get a follow-up about failure
-        pass
+    except Exception as e:
+        print(f"[ERROR] Failed to start Step Functions: {e}")
 
-    # 9. Return deferred ack (type 5) within 3 seconds
+    # 8. Return deferred ack (type 5) within 3 seconds
     deferred = build_deferred_response()
     return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(deferred))}
 
