@@ -273,7 +273,7 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 
 ## Discord Control Plane (Bot-Driven Launch)
 
-The Discord integration lets authorized friends launch and manage the server directly from a Discord channel using a `/launch` slash command — no AWS access needed.
+The Discord integration lets authorized friends launch and manage the server directly from a Discord channel using `/launch` and `/status` slash commands — no AWS access needed.
 
 ### How it works
 
@@ -390,13 +390,19 @@ From any Discord channel where the bot is accessible:
 ```
 /launch                          # launches with default preset (Freedom Fighters)
 /launch preset:proceduralcombat  # launches with Procedural Combat preset
+/status                          # check current server status
 ```
 
-The bot responds with:
+The bot responds to `/launch` with:
 - A deferred acknowledgement (instantly)
 - A "launch started" message with the selected preset
 - Connection details (`<public_ip>:2001`) once the server is ready
 - A timeout or failure message if something goes wrong
+
+The bot responds to `/status` with:
+- Current server state (offline, launching, running, tearing down)
+- Connection details (`<ip>:<port>`) when the server is running
+- The active preset name
 
 ### Available presets
 
