@@ -41,85 +41,76 @@ LAMBDA_FUNCTIONS = {
 }
 
 # Packages to include from the virtualenv (beyond the project itself)
-RUNTIME_DEPS = [
-    "boto3",
-    "botocore",
-    "pynacl",
-    "nacl",
-    "cffi",
-    "pycparser",
-    "jmespath",
-    "s3transfer",
-    "dateutil",
-    "urllib3",
-    "yaml",
-]
+# (Dependencies are now installed via pip targeting the Lambda platform)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def build_zip() -> bytes:
-    """Build a deployment zip containing the control plane package and dependencies."""
+    """Build a deployment zip containing the control plane package and Linux dependencies.
+
+    Uses pip to download manylinux wheels for Lambda's x86_64 Amazon Linux runtime,
+    ensuring compiled extensions (like PyNaCl's _sodium) are compatible.
+    """
     print("Building deployment package...")
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        # Add the discord_control_plane package
-        pkg_root = PROJECT_ROOT / "discord_control_plane"
-        for filepath in pkg_root.rglob("*.py"):
-            arcname = filepath.relative_to(PROJECT_ROOT)
-            if "__pycache__" in str(arcname):
-                continue
-            zf.write(filepath, arcname)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        deps_dir = Path(tmpdir) / "deps"
+        deps_dir.mkdir()
 
-        # Add runtime dependencies from the virtual environment
-        venv_lib = _find_site_packages()
-        if venv_lib:
-            for dep in RUNTIME_DEPS:
-                dep_path = venv_lib / dep
-                if dep_path.is_dir():
-                    for filepath in dep_path.rglob("*"):
-                        if filepath.is_file() and "__pycache__" not in str(filepath):
-                            arcname = filepath.relative_to(venv_lib)
-                            zf.write(filepath, arcname)
-                # Also check for .dist-info or single-file modules
-                for item in venv_lib.glob(f"{dep}*"):
-                    if item.is_file() and item.suffix in (".py", ".so", ".pyd"):
-                        zf.write(item, item.relative_to(venv_lib))
+        # Install runtime deps targeting Lambda's Linux x86_64 platform
+        print("  Installing Linux-compatible dependencies...")
+        # Packages with compiled extensions — need manylinux wheels
+        native_deps = ["pynacl", "cffi", "pyyaml"]
+        subprocess.run(
+            [
+                "uv", "pip", "install",
+                "--target", str(deps_dir),
+                "--python-platform", "x86_64-manylinux2014",
+                "--python-version", "3.12",
+                "--no-deps",
+            ] + native_deps,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
-            # Include _cffi_backend (compiled extension needed by PyNaCl)
-            for ext in venv_lib.glob("_cffi_backend*"):
-                if ext.is_file():
-                    zf.write(ext, ext.relative_to(venv_lib))
+        # Pure-python deps (no platform-specific binaries needed)
+        pure_deps = ["pycparser", "boto3", "botocore", "jmespath", "s3transfer", "urllib3", "python-dateutil"]
+        subprocess.run(
+            [
+                "uv", "pip", "install",
+                "--target", str(deps_dir),
+                "--no-deps",
+            ] + pure_deps,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            # Add the discord_control_plane package
+            pkg_root = PROJECT_ROOT / "discord_control_plane"
+            for filepath in pkg_root.rglob("*.py"):
+                arcname = filepath.relative_to(PROJECT_ROOT)
+                if "__pycache__" in str(arcname):
+                    continue
+                zf.write(filepath, arcname)
+
+            # Add all installed dependencies from the temp dir
+            for filepath in deps_dir.rglob("*"):
+                if filepath.is_file() and "__pycache__" not in str(filepath):
+                    arcname = filepath.relative_to(deps_dir)
+                    # Skip .dist-info directories to save space
+                    if ".dist-info" in str(arcname):
+                        continue
+                    zf.write(filepath, arcname)
 
     zip_bytes = buf.getvalue()
     size_mb = len(zip_bytes) / (1024 * 1024)
     print(f"Package built: {size_mb:.1f} MB")
     return zip_bytes
-
-
-def _find_site_packages() -> Path | None:
-    """Locate the site-packages directory in the current environment."""
-    # Check for .venv first (uv standard)
-    venv = PROJECT_ROOT / ".venv"
-    if venv.exists():
-        # Windows
-        win_path = venv / "Lib" / "site-packages"
-        if win_path.exists():
-            return win_path
-        # Linux/Mac
-        for lib_dir in (venv / "lib").glob("python*"):
-            sp = lib_dir / "site-packages"
-            if sp.exists():
-                return sp
-
-    # Fallback: use the running interpreter's site-packages
-    import site
-    paths = site.getsitepackages()
-    for p in paths:
-        if Path(p).exists():
-            return Path(p)
-    return None
 
 
 def deploy(profile: str | None, region: str) -> None:
