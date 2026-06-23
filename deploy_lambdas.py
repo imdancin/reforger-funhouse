@@ -146,6 +146,9 @@ def deploy(profile: str | None, region: str) -> None:
                 FunctionName=function_name,
                 ZipFile=zip_bytes,
             )
+            # Wait for the code update to complete before updating configuration
+            waiter = client.get_waiter("function_updated")
+            waiter.wait(FunctionName=function_name)
             # Also update the handler path to point to our module
             client.update_function_configuration(
                 FunctionName=function_name,

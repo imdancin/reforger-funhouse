@@ -461,6 +461,11 @@ resource "aws_sfn_state_machine" "launch_orchestrator" {
             Variable      = "$.ready"
             BooleanEquals = true
             Next          = "MarkRunning"
+          },
+          {
+            Variable      = "$.timed_out"
+            BooleanEquals = true
+            Next          = "TimedOut"
           }
         ]
         Default = "WaitForReady"
