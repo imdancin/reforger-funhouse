@@ -128,10 +128,12 @@ def handle_check_ready(event: dict, context=None) -> dict:
     except Exception:
         public_ip = None
 
-    # Evaluate readiness
+    # Evaluate readiness — bootstrap-status is the primary signal.
+    # Port 2001 is UDP (game traffic) and cannot be probed via TCP.
+    # If bootstrap-status starts with "ready", the EC2 user_data completed
+    # successfully, meaning K3s + game server pod are running.
     bootstrap_ready = bootstrap_status.startswith("ready")
-    port_reachable = _probe_port(public_ip, 2001) if public_ip else False
-    server_ready = is_ready(bootstrap_ready, port_reachable)
+    server_ready = bootstrap_ready
 
     result = {**event, "ready": server_ready, "timed_out": False, "public_ip": public_ip}
     logger.info(
