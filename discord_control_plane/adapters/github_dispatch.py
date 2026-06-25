@@ -41,7 +41,7 @@ def dispatch_apply(
     instance_count: int,
     active_scenario: str,
     repo: str = "imdancin/reforger-funhouse",
-    secret_name: str = "arma-reforger/github-dispatch-token",
+    secret_name: str = "/arma-reforger/github-dispatch-token",
     secrets_client=None,
 ) -> None:
     """Trigger a repository_dispatch event on the target repo.
