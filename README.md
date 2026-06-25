@@ -4,10 +4,15 @@ Terraform + Kubernetes GitOps infrastructure for a dedicated Arma Reforger game 
 
 ## How it works
 
-1. **Terraform** provisions a `c6i.xlarge` EC2 instance with a persistent 50GB EBS volume
-2. **User data** bootstraps K3s and ArgoCD on the instance
-3. **ArgoCD** pulls Helm manifests from this repo and deploys the game server pod
-4. **External Secrets Operator** injects passwords from AWS Secrets Manager into the pod at runtime
+1. **Discord `/launch`** triggers the control plane — a Lambda verifies the user, transitions state to LAUNCHING, and starts a Step Functions orchestrator
+2. **Step Functions** resets SSM bootstrap-status, dispatches a `repository_dispatch` event to GitHub
+3. **GitHub Actions** runs `terraform apply` with `instance_count=1` via OIDC-based AWS credentials
+4. **Terraform** provisions a `c6i.xlarge` EC2 instance with a persistent 20GB EBS data volume
+5. **User data** bootstraps K3s and ArgoCD on the instance, writes `ready:<timestamp>` to SSM when done
+6. **The orchestrator** polls SSM + port 2001 every 30 seconds until ready, then posts connection details to Discord
+7. **ArgoCD** pulls Helm manifests from this repo and deploys the game server pod
+8. **External Secrets Operator** injects passwords from AWS Secrets Manager into the pod at runtime
+9. **Idle Monitor** samples player count via RCON — after 30 minutes of zero players, invokes teardown (dispatches `instance_count=0`)
 
 The game server runs inside a container (`ghcr.io/acemod/arma-reforger`) on the K3s cluster with `hostNetwork: true`, binding directly to the EC2 host's network interfaces.
 
@@ -49,6 +54,7 @@ powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
 ### 4. Create your `terraform.tfvars`
 
 ```hcl
+aws_profile       = "reforger-admin"  # your local AWS CLI profile (leave empty for CI)
 instance_count    = 0          # start with 0, launch script sets to 1
 enable_custom_dns = true       # set false if you don't have a Route 53 zone
 domain_name       = "yourdomain.com"
@@ -85,7 +91,7 @@ Edit `cluster-manifests/values-freedomfighters.yaml` to set your scenario, mods,
 ### 8. Initialize Terraform and launch
 
 ```bash
-terraform init
+terraform init -backend-config="profile=reforger-admin"
 uv run python main.py
 ```
 
@@ -101,20 +107,28 @@ repoURL: 'https://github.com/YOUR-USER/reforger-funhouse.git'
 
 ## Quick start
 
-### Launch the server
+### Launch the server (Discord)
+
+From any Discord channel where the bot is accessible:
+
+```
+/launch                          # launches with default preset (Freedom Fighters)
+/launch preset:proceduralcombat  # launches with Procedural Combat preset
+```
+
+This triggers the full pipeline: SSM reset → GitHub dispatch → Terraform apply → EC2 boot → bootstrap → readiness check → Discord posts connection details.
+
+### Launch the server (manual)
 
 ```bash
 uv run python main.py
 ```
 
-This runs the full pipeline:
-1. `terraform apply -auto-approve` — provisions the EC2 instance
-2. Waits for SSH to become available on the instance
-3. Streams cloud-init bootstrap logs (K3s, ArgoCD, ESO installation)
-4. Waits for the game server pod to reach Running state
-5. Streams game server logs until you Ctrl+C
+This runs `terraform apply` directly from your machine (bypasses the Discord/GitHub Actions flow).
 
 ### Tear down the server
+
+The idle monitor tears down automatically after 30 minutes of zero players. To tear down manually:
 
 ```bash
 terraform apply -var "instance_count=0" -auto-approve
@@ -127,6 +141,7 @@ The EBS volume persists (game saves are kept). Next launch resumes from the exis
 All sensitive values go in `terraform.tfvars` (gitignored):
 
 ```hcl
+aws_profile       = "reforger-admin"
 instance_count    = 1
 enable_custom_dns = true
 domain_name       = "imdancin.com"
@@ -248,6 +263,7 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 | `deploy_lambdas.py` | One-command deployment of all control-plane Lambda functions |
 | `pyproject.toml` | Python project config (dependencies, pytest, Hypothesis settings) |
 | `providers.tf` | AWS provider and S3 backend config |
+| `.github/workflows/terraform-apply.yml` | GitHub Actions workflow triggered by `repository_dispatch` to run `terraform apply` |
 | `backend-resources.tf` | S3 state bucket and DynamoDB lock table |
 | `networking.tf` | VPC, subnet, internet gateway, route table |
 | `security-groups.tf` | Game ports (UDP 2001, 1999), Grafana (TCP 3000), and conditional SSH |
@@ -279,8 +295,11 @@ The Discord integration lets authorized friends launch and manage the server dir
 
 1. A Discord slash command posts a signed interaction to an API Gateway endpoint
 2. The `Launch_Handler` Lambda verifies the Ed25519 signature, checks an allowlist, and transitions the server state to `LAUNCHING`
-3. A Step Functions state machine dispatches a GitHub Actions workflow (`instance_count=1`), polls for readiness, and posts connection details back to Discord
-4. An `Idle_Monitor` CronJob on the K3s cluster samples player count via RCON — after 30 minutes of zero players, it invokes the `Teardown_Handler` Lambda to destroy the instance
+3. A Step Functions state machine resets SSM bootstrap-status to `"provisioning"`, then dispatches a `repository_dispatch` event to GitHub
+4. A GitHub Actions workflow (`terraform-apply.yml`) runs `terraform apply` with `instance_count=1` using OIDC-based AWS credentials
+5. The orchestrator polls SSM bootstrap-status and port 2001 every 30 seconds until the EC2 instance reports ready
+6. Once ready, `MarkRunning` posts connection details back to Discord and transitions state to `RUNNING`
+7. An `Idle_Monitor` CronJob on the K3s cluster samples player count via RCON — after 30 minutes of zero players, it invokes the `Teardown_Handler` Lambda to destroy the instance
 
 ### Prerequisites
 
@@ -315,7 +334,18 @@ control_plane_api_endpoint = "https://xxxxxxxx.execute-api.us-west-2.amazonaws.c
 
 Set this as the **Interactions Endpoint URL** in your Discord app settings. Discord will send a `PING` to verify it — the Lambda responds with `PONG` automatically.
 
-#### 2. Populate secrets
+#### 2. Set up GitHub Actions secrets
+
+The `/launch` command triggers a GitHub Actions workflow to run Terraform. You need:
+
+| Secret | Value |
+|--------|-------|
+| `AWS_ROLE_ARN` | Full ARN of the OIDC deployer role (e.g., `arn:aws:iam::123456789:role/github-actions-arma-deployer`) |
+| `TERRAFORM_TFVARS` | Full contents of your `terraform.tfvars` file (with `aws_profile = ""`) |
+
+The workflow uses OIDC federation — no static AWS keys needed. The IAM role's trust policy must allow `repo:YOUR-ORG/reforger-funhouse:*`.
+
+#### 3. Populate AWS secrets
 
 ```bash
 # GitHub dispatch token
@@ -433,9 +463,13 @@ This runs ~200 tests covering signature verification, authorization, preset reso
 ### Troubleshooting
 
 - **"Invalid signature" / 401 on Discord endpoint verification**: Double-check the `discord_app_public_key` in your tfvars matches the hex public key from the Discord Developer Portal (General Information → Public Key).
-- **Launch times out**: Check the GitHub Actions workflow is triggering correctly. Verify the dispatch token has `contents: write` permission on the repo.
+- **"Application did not respond"**: The launch handler Lambda is hitting Discord's 3-second response deadline. This usually happens on the first invocation after a deploy (cold start). Try again — subsequent invocations use SnapStart and respond faster.
+- **Launch times out**: Check the GitHub Actions workflow is triggering correctly. Verify the dispatch token has `contents: write` permission on the repo. Check the workflow run at `https://github.com/YOUR-ORG/reforger-funhouse/actions`.
+- **GitHub Actions fails with "failed to get shared config profile"**: The `terraform.tfvars` in your `TERRAFORM_TFVARS` secret should have `aws_profile = ""` (not your local profile name).
+- **GitHub Actions fails with IAM permission errors**: The OIDC deployer role needs permissions for all services Terraform manages. Check the inline policy on `github-actions-arma-deployer`.
+- **Orchestrator SUCCEEDED in ~6 seconds without provisioning**: This was the original bug. Ensure you've deployed the latest Lambda code (`python deploy_lambdas.py`) which includes the SSM bootstrap-status reset.
 - **Allowlist denials**: Confirm user/role IDs in the SSM parameter. IDs are snowflakes (18-digit numbers).
-- **Idle_Monitor not firing**: Ensure `idleMonitor.enabled: true` in your values file and that the RCON password secret (`arma-rcon-secret`) exists on the cluster.
+- **Idle_Monitor not firing**: Ensure `idleMonitor.enabled: true` in your values file and that the RCON password secret (`arma-rcon-secret`) exists on the cluster. Also confirm DynamoDB state is `RUNNING` (teardown only triggers from RUNNING state).
 
 ## Known quirks
 
