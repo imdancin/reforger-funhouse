@@ -216,6 +216,10 @@ resource "aws_lambda_function" "launch_handler" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
+
   timeouts {
     create = "5m"
     update = "5m"
@@ -256,6 +260,10 @@ resource "aws_lambda_function" "set_preset" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
+
   tags = {
     Name = "arma-set-preset"
   }
@@ -276,6 +284,10 @@ resource "aws_lambda_function" "dispatch_apply" {
     variables = {
       STATE_TABLE_NAME = aws_dynamodb_table.arma_server_state.name
     }
+  }
+
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
   }
 
   tags = {
@@ -300,6 +312,10 @@ resource "aws_lambda_function" "check_ready" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
+
   tags = {
     Name = "arma-check-ready"
   }
@@ -320,6 +336,10 @@ resource "aws_lambda_function" "mark_running" {
     variables = {
       STATE_TABLE_NAME = aws_dynamodb_table.arma_server_state.name
     }
+  }
+
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
   }
 
   tags = {
@@ -344,6 +364,10 @@ resource "aws_lambda_function" "failed" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
+
   tags = {
     Name = "arma-launch-failed"
   }
@@ -366,6 +390,10 @@ resource "aws_lambda_function" "timed_out" {
     }
   }
 
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
+  }
+
   tags = {
     Name = "arma-launch-timed-out"
   }
@@ -386,6 +414,10 @@ resource "aws_lambda_function" "teardown_handler" {
     variables = {
       STATE_TABLE_NAME = aws_dynamodb_table.arma_server_state.name
     }
+  }
+
+  lifecycle {
+    ignore_changes = [filename, source_code_hash]
   }
 
   tags = {
