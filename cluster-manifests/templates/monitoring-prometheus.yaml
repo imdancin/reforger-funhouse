@@ -33,6 +33,12 @@ data:
         bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
         static_configs:
           - targets: ['localhost:10250']
+
+{{- if .Values.idleMonitor.enabled }}
+      - job_name: 'idle-monitor'
+        static_configs:
+          - targets: ['idle-monitor-metrics:{{ .Values.idleMonitor.metricsPort }}']
+{{- end }}
 ---
 apiVersion: v1
 kind: PersistentVolume

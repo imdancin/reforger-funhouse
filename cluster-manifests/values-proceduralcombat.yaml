@@ -17,6 +17,22 @@ game:
   serverMinGrassDistance: "50"
   networkViewDistance: "2500"
 
+idleMonitor:
+  enabled: true
+  image: "ghcr.io/acemod/reforger-funhouse-control-plane:latest"
+  sampleIntervalSeconds: 60
+  metricsPort: 8000
+  idleThresholdSeconds: "1800"
+  teardownFunctionName: "arma-teardown-handler"
+  awsRegion: "us-west-2"
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      cpu: "100m"
+      memory: "128Mi"
+
 monitoring:
   enabled: true
   prometheus:
