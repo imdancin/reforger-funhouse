@@ -21,7 +21,7 @@ import boto3
 
 from discord_control_plane.adapters.discord_messaging import post_followup
 from discord_control_plane.adapters.github_dispatch import dispatch_apply
-from discord_control_plane.adapters.scenario_store import write_active_scenario
+from discord_control_plane.adapters.scenario_store import set_active_scenario
 from discord_control_plane.adapters.state_store import StateStore, TransitionStatus
 from discord_control_plane.core.models import ServerState
 from discord_control_plane.core.readiness import is_ready
@@ -43,7 +43,7 @@ def handle_set_preset(event: dict, context=None) -> dict:
     Returns the event dict (pass-through for next state).
     """
     preset = event.get("preset", "")
-    write_active_scenario(preset)
+    set_active_scenario(preset)
     logger.info("Active scenario set to: %s", preset)
     return event
 
