@@ -40,7 +40,7 @@ def _get_github_token(secret_name: str, secrets_client=None) -> str:
 def dispatch_apply(
     instance_count: int,
     active_scenario: str,
-    repo: str = "smccrear/reforger-funhouse",
+    repo: str = "imdancin/reforger-funhouse",
     secret_name: str = "arma-reforger/github-dispatch-token",
     secrets_client=None,
 ) -> None:
