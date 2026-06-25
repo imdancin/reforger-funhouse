@@ -16,15 +16,13 @@ terraform {
     }
   }
 
-  # UNCOMMENTED: Moving state management to the cloud layer
-  # backend "s3" {
-  #   bucket         = "your-unique-arma-tfstate-bucket"
-  #   key            = "arma-reforger/terraform.tfstate"
-  #   region         = "us-west-2"
-  #   dynamodb_table = "arma-tf-lockstate-table"
-  #   encrypt        = true
-  #   profile        = "reforger-admin" # Inherits your active keyless session config
-  # }
+  backend "s3" {
+    bucket         = "your-unique-arma-tfstate-bucket"
+    key            = "arma-reforger/terraform.tfstate"
+    region         = "us-west-2"
+    dynamodb_table = "arma-tf-lockstate-table"
+    encrypt        = true
+  }
 }
 
 provider "aws" {
