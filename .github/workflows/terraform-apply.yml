@@ -25,6 +25,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
 
+      - name: Write tfvars
+        run: echo '${{ secrets.TERRAFORM_TFVARS }}' > terraform.tfvars
+
       - name: Terraform Init
         run: terraform init
 
