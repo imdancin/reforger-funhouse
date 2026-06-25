@@ -133,7 +133,7 @@ def handle_check_ready(event: dict, context=None) -> dict:
     port_reachable = _probe_port(public_ip, 2001) if public_ip else False
     server_ready = is_ready(bootstrap_ready, port_reachable)
 
-    result = {**event, "ready": server_ready, "public_ip": public_ip}
+    result = {**event, "ready": server_ready, "timed_out": False, "public_ip": public_ip}
     logger.info(
         "Readiness check: bootstrap=%s, port=%s, ready=%s",
         bootstrap_status,
