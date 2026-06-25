@@ -217,7 +217,7 @@ resource "aws_lambda_function" "launch_handler" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   timeouts {
@@ -261,7 +261,7 @@ resource "aws_lambda_function" "set_preset" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   tags = {
@@ -287,7 +287,7 @@ resource "aws_lambda_function" "dispatch_apply" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   tags = {
@@ -313,7 +313,7 @@ resource "aws_lambda_function" "check_ready" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   tags = {
@@ -339,7 +339,7 @@ resource "aws_lambda_function" "mark_running" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   tags = {
@@ -365,7 +365,7 @@ resource "aws_lambda_function" "failed" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   tags = {
@@ -391,7 +391,7 @@ resource "aws_lambda_function" "timed_out" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   tags = {
@@ -417,7 +417,7 @@ resource "aws_lambda_function" "teardown_handler" {
   }
 
   lifecycle {
-    ignore_changes = [filename, source_code_hash]
+    ignore_changes = [filename, source_code_hash, handler]
   }
 
   tags = {
@@ -643,3 +643,4 @@ output "teardown_handler_arn" {
   description = "ARN of the Teardown_Handler Lambda (referenced by Idle_Monitor)"
   value       = aws_lambda_function.teardown_handler.arn
 }
+
