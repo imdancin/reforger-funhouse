@@ -1,5 +1,11 @@
 # Non-sensitive Terraform variables — values set in terraform.tfvars
 
+variable "aws_profile" {
+  type        = string
+  default     = ""
+  description = "AWS CLI profile to use. Leave empty for CI/CD (uses environment credentials)."
+}
+
 variable "instance_count" {
   type        = number
   default     = 0

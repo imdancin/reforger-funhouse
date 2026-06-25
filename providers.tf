@@ -29,7 +29,7 @@ terraform {
 
 provider "aws" {
   region  = "us-west-2"
-  profile = "reforger-admin"
+  profile = var.aws_profile != "" ? var.aws_profile : null
 
   default_tags {
     tags = {
