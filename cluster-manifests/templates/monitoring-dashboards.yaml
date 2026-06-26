@@ -146,13 +146,44 @@ data:
               "refId": "B"
             }
           ]
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "min": 0,
+              "decimals": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "blue", "value": null },
+                  { "color": "green", "value": 1 }
+                ]
+              }
+            }
+          },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "id": 5,
+          "title": "Connected Players",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "arma_connected_players",
+              "legendFormat": "Players",
+              "refId": "A"
+            }
+          ]
         }
       ],
       "schemaVersion": 39,
       "tags": ["node-exporter", "infrastructure"],
       "templating": { "list": [] },
       "time": { "from": "now-1h", "to": "now" },
-      "title": "Node Exporter",
+      "title": "Server Overview",
       "uid": "node-exporter-dashboard",
       "version": 1
     }
