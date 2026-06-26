@@ -2,6 +2,8 @@
 
 Terraform + Kubernetes GitOps infrastructure for a dedicated Arma Reforger game server on AWS. One command to launch, one command to tear down.
 
+**Support server costs:** The server runs on AWS and costs real money. If you're enjoying game nights and want to chip in for hosting costs, tips are appreciated: [ko-fi.com/imdancin](https://ko-fi.com/imdancin)
+
 ## How it works
 
 1. **Discord `/launch`** triggers the control plane — a Lambda verifies the user, transitions state to LAUNCHING, and starts a Step Functions orchestrator
