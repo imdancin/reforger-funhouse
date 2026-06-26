@@ -137,9 +137,8 @@ def handle_check_ready(event: dict, context=None) -> dict:
 
     result = {**event, "ready": server_ready, "timed_out": False, "public_ip": public_ip}
     logger.info(
-        "Readiness check: bootstrap=%s, port=%s, ready=%s",
+        "Readiness check: bootstrap=%s, ready=%s",
         bootstrap_status,
-        port_reachable,
         server_ready,
     )
     return result

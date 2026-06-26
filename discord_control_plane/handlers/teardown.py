@@ -68,22 +68,23 @@ def handle_teardown(
     if state_store is None:
         state_store = StateStore()
 
-    # Step 1: Transition RUNNING -> TEARING_DOWN
+    # Step 1: Transition RUNNING/LAUNCHING -> TEARING_DOWN
     current_record = state_store.get_state()
 
-    if current_record.state != ServerState.RUNNING:
+    teardown_eligible = {ServerState.RUNNING, ServerState.LAUNCHING}
+    if current_record.state not in teardown_eligible:
         logger.info(
-            "Teardown skipped: server state is %s (expected RUNNING)",
+            "Teardown skipped: server state is %s (expected RUNNING or LAUNCHING)",
             current_record.state.value,
         )
         return {
             "status": "conflict",
-            "reason": f"Server state is {current_record.state.value}, not RUNNING",
+            "reason": f"Server state is {current_record.state.value}, not RUNNING or LAUNCHING",
         }
 
     now_iso = datetime.now(timezone.utc).isoformat()
     transition_result = state_store.try_transition(
-        expected_state=ServerState.RUNNING.value,
+        expected_state=current_record.state.value,
         new_state=ServerState.TEARING_DOWN.value,
         attrs={
             "preset": current_record.preset,
@@ -94,7 +95,8 @@ def handle_teardown(
 
     if transition_result.status != TransitionStatus.ACQUIRED:
         logger.warning(
-            "Teardown state transition RUNNING -> TEARING_DOWN failed (conflict)"
+            "Teardown state transition %s -> TEARING_DOWN failed (conflict)",
+            current_record.state.value,
         )
         return {
             "status": "conflict",
