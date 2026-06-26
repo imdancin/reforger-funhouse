@@ -34,33 +34,40 @@ class RconError(Exception):
 # ---------------------------------------------------------------------------
 
 _HEADER = b"BE"
+_PAYLOAD_PREFIX = b"\xff"  # All BERCon packets have 0xFF after the CRC
 
 
 def _checksum(payload: bytes) -> bytes:
-    """Compute the CRC32 checksum for BERCon (little-endian, unsigned)."""
-    crc = zlib.crc32(payload) & 0xFFFFFFFF
+    """Compute the CRC32 checksum for BERCon (little-endian, unsigned).
+
+    The checksum covers the 0xFF prefix byte plus the type-specific payload.
+    """
+    crc = zlib.crc32(_PAYLOAD_PREFIX + payload) & 0xFFFFFFFF
     return struct.pack("<I", crc)
 
 
 def _build_packet(payload: bytes) -> bytes:
-    """Build a full BERCon packet: header + checksum + payload."""
-    return _HEADER + _checksum(payload) + payload
+    """Build a full BERCon packet: 'BE' + CRC32(0xFF + payload) + 0xFF + payload."""
+    return _HEADER + _checksum(payload) + _PAYLOAD_PREFIX + payload
 
 
 def _build_login_packet(password: str) -> bytes:
-    """Build a login request packet."""
-    payload = b"\xff" + password.encode("utf-8")
+    """Build a login request packet (type 0x00 + password)."""
+    payload = b"\x00" + password.encode("utf-8")
     return _build_packet(payload)
 
 
 def _build_command_packet(seq: int, command: str) -> bytes:
-    """Build a command request packet with a sequence number."""
+    """Build a command request packet with a sequence number (type 0x01 + seq + command)."""
     payload = b"\x01" + struct.pack("B", seq & 0xFF) + command.encode("utf-8")
     return _build_packet(payload)
 
 
 def _validate_response(data: bytes) -> bytes:
-    """Validate a BERCon response and return the payload.
+    """Validate a BERCon response and return the payload (after 0xFF prefix).
+
+    Packet format: 'BE' (2) + CRC32 (4) + 0xFF (1) + payload
+    The CRC covers 0xFF + payload.
 
     Raises RconError if the packet is malformed or the checksum is invalid.
     """
@@ -69,7 +76,13 @@ def _validate_response(data: bytes) -> bytes:
     if data[:2] != _HEADER:
         raise RconError("Invalid BERCon header")
     received_crc = data[2:6]
-    payload = data[6:]
+    # Everything after the CRC (0xFF + payload)
+    suffix = data[6:]
+    if not suffix or suffix[0:1] != _PAYLOAD_PREFIX:
+        raise RconError("Missing 0xFF prefix in BERCon response")
+    # Payload is everything after the 0xFF
+    payload = suffix[1:]
+    # CRC covers 0xFF + payload
     expected_crc = _checksum(payload)
     if received_crc != expected_crc:
         raise RconError("Checksum mismatch in RCON response")
@@ -77,11 +90,13 @@ def _validate_response(data: bytes) -> bytes:
 
 
 def _parse_login_response(payload: bytes) -> bool:
-    """Parse a login response payload. Returns True if login succeeded."""
+    """Parse a login response payload. Returns True if login succeeded.
+
+    Payload format: 0x00 (login type) + 0x01 (success) or 0x00 (failure).
+    """
     if len(payload) < 2:
         return False
-    # payload[0] == 0xFF (login type), payload[1] == 0x01 success / 0x00 failure
-    return payload[0] == 0xFF and payload[1] == 0x01
+    return payload[0] == 0x00 and payload[1] == 0x01
 
 
 def _parse_player_count(response_text: str) -> int:
@@ -175,6 +190,8 @@ def sample_player_count(
 
         # Step 4: Receive command response(s)
         # BERCon may split responses across multiple packets; collect until timeout
+        # Command ack: type 0x01 + seq + optional header + response body
+        # Server message: type 0x02 + seq + message (needs ack from client)
         response_parts: list[str] = []
         while True:
             try:
@@ -183,18 +200,34 @@ def sample_player_count(
                 break
 
             payload = _validate_response(data)
-            if len(payload) < 3:
+            if len(payload) < 2:
                 continue
 
-            # Command response: type 0x02, seq byte, then body
-            if payload[0] == 0x02:
-                # Skip type byte and sequence byte
-                body = payload[2:].decode("utf-8", errors="replace")
+            # Command response (ack): type 0x01, seq byte, then optional body
+            if payload[0] == 0x01:
+                if len(payload) <= 2:
+                    # Empty ack (no response body) — command acknowledged
+                    continue
+                # Check for multi-part header: 0x00 + num_packets + index
+                body_start = 2
+                if len(payload) > 4 and payload[2] == 0x00:
+                    # Multi-part: skip the 3-byte sub-header
+                    body_start = 5
+                body = payload[body_start:].decode("utf-8", errors="replace")
                 response_parts.append(body)
                 # If we got a response with the total line, we're done
                 if "players in total" in body or "Players on server" in body:
                     # Give a brief window for any trailing packets
                     sock.settimeout(0.5)
+
+            # Server message: type 0x02, seq byte, then message
+            # We need to acknowledge these to stay connected
+            elif payload[0] == 0x02 and len(payload) >= 2:
+                seq_byte = payload[1:2]
+                # Send ack: type 0x02 + received seq
+                ack_payload = b"\x02" + seq_byte
+                ack_packet = _build_packet(ack_payload)
+                sock.sendto(ack_packet, (host, port))
 
         if not response_parts:
             raise RconError("No response received for 'players' command")
