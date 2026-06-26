@@ -266,6 +266,7 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 | `providers.tf` | AWS provider and S3 backend config |
 | `.github/workflows/terraform-apply.yml` | GitHub Actions workflow triggered by `repository_dispatch` to run `terraform apply` |
 | `.github/workflows/build-idle-monitor.yml` | GitHub Actions workflow to build and push the idle monitor container image to GHCR |
+| `.github/workflows/deploy-lambdas.yml` | GitHub Actions workflow to deploy control-plane Lambda code on merge to main |
 | `backend-resources.tf` | S3 state bucket and DynamoDB lock table |
 | `networking.tf` | VPC, subnet, internet gateway, route table |
 | `security-groups.tf` | Game ports (UDP 2001, UDP 1999 RCON), Grafana (TCP 3000), and conditional SSH |
@@ -415,6 +416,8 @@ uv run python deploy_lambdas.py --profile reforger-admin --region us-west-2
 
 The script updates both the code and the handler path for each function. Run it again after any code changes to the control plane.
 
+After the initial deploy, a CI workflow (`.github/workflows/deploy-lambdas.yml`) automatically redeploys the Lambdas whenever changes to `discord_control_plane/` are merged to `main`.
+
 ### Usage
 
 From any Discord channel where the bot is accessible:
@@ -474,6 +477,61 @@ This runs ~200 tests covering signature verification, authorization, preset reso
 - **Orchestrator SUCCEEDED in ~6 seconds without provisioning**: This was the original bug. Ensure you've deployed the latest Lambda code (`python deploy_lambdas.py`) which includes the SSM bootstrap-status reset.
 - **Allowlist denials**: Confirm user/role IDs in the SSM parameter. IDs are snowflakes (18-digit numbers).
 - **Idle_Monitor not firing**: Ensure `idleMonitor.enabled: true` in your values file and that the RCON password secret (`arma-rcon-secret`) exists on the cluster. The game server deployment must include `RCON_ADDRESS=0.0.0.0`, `RCON_PERMISSION=admin`, and `-rcon` in `ARMA_PARAMS` for BattlEye RCON to actually bind. Verify RCON is listening with `ss -ulnp | grep 1999` (it's UDP, not TCP). Also confirm DynamoDB state is `RUNNING` or `LAUNCHING` (teardown only triggers from those states). The `eso-reader` IAM user must have `lambda:InvokeFunction` permission on the teardown handler.
+
+## Adding a new scenario (contributing a preset)
+
+Want to add a new game mode? Here's the full process:
+
+### 1. Create the values file
+
+Copy an existing preset as a starting point:
+
+```bash
+cp cluster-manifests/values-freedomfighters.yaml cluster-manifests/values-yourscenario.yaml
+```
+
+Edit the `game:` section with your scenario details:
+
+```yaml
+game:
+  name: "Dancins Reforger Funhouse - Your Scenario Name"
+  maxPlayers: 10
+  scenarioId: "{SCENARIO_GUID}Missions/YourScenario/Map.conf"
+  modsList: "MOD_ID_1,MOD_ID_2,MOD_ID_3"
+```
+
+You can find the `scenarioId` in the Arma Reforger Workbench or from the mod's workshop page. The `modsList` is a comma-separated list of mod GUIDs (the hex IDs from the Workshop URL or `ServerData.json`).
+
+Leave the `idleMonitor:` and `monitoring:` sections unchanged — just copy them from an existing file.
+
+### 2. Register the preset in code
+
+Add your preset to `discord_control_plane/core/models.py` in the `PRESETS` dict:
+
+```python
+PRESETS: dict[str, Preset] = {
+    "freedomfighters": Preset("freedomfighters", "values-freedomfighters.yaml", "Freedom Fighters"),
+    "proceduralcombat": Preset("proceduralcombat", "values-proceduralcombat.yaml", "Procedural Combat"),
+    "yourscenario": Preset("yourscenario", "values-yourscenario.yaml", "Your Scenario Name"),  # ← add this
+}
+```
+
+### 3. Watch your modset size vs. EBS volume
+
+Each mod gets downloaded to the persistent EBS volume on first launch. The base game is ~10GB, and mods can add several GB more. The volume size is set by `data_volume_size` in `vars.tf` (default: 20GB). This same volume also stores Prometheus metrics data and save files.
+
+**If your new scenario has a large modset**, the 20GB default may not be enough. After a launch, check disk usage via SSH (`df -h /opt/arma-server-data`). EBS volumes can be grown but never shrunk — if it's getting tight, the aws admin will need to bump `data_volume_size` in the Terraform config.
+
+### 4. Open a PR
+
+Push your branch and open a PR with:
+- The new `values-yourscenario.yaml` file
+- The updated `models.py` with the preset entry
+
+Once merged to `main`:
+- A CI job automatically deploys the updated Lambda code (the bot will accept the new preset name immediately)
+- ArgoCD picks up the new values file on the next sync
+- The AWS admin will need to re-register the `/launch` slash command with Discord (one-time curl) for the new preset to appear in the autocomplete dropdown
 
 ## Known quirks
 

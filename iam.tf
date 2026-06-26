@@ -95,6 +95,19 @@ resource "aws_iam_policy" "github_actions_least_privilege" {
           "dynamodb:DescribeTable"
         ]
         Resource = "arn:aws:dynamodb:us-west-2:*:table/arma-tf-lockstate-table"
+      },
+      {
+        Sid    = "LambdaDeploy"
+        Effect = "Allow"
+        Action = [
+          "lambda:UpdateFunctionCode",
+          "lambda:UpdateFunctionConfiguration",
+          "lambda:GetFunction",
+          "lambda:GetFunctionConfiguration",
+          "lambda:PublishVersion",
+          "lambda:UpdateAlias"
+        ]
+        Resource = "arn:aws:lambda:us-west-2:*:function:arma-*"
       }
     ]
   })
