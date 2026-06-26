@@ -162,7 +162,7 @@ The stack includes a full observability layer that deploys alongside the game se
 
 - **Prometheus** scrapes metrics from the K3s cluster (kubelet, kube-state-metrics, node-exporter) every 15-30 seconds and stores them with 15-day retention
 - **Grafana** serves dashboards at `grafana.imdancin.com:3000` (or `<public_ip>:3000`)
-- **Pre-built dashboards** for Node Exporter (CPU, memory, disk, network) and Kubernetes (pod status, resource usage, deployment replicas)
+- **Pre-built dashboards** for Server Overview (CPU, memory, disk, network, connected players) and Kubernetes (pod status, resource usage, deployment replicas)
 
 ### Accessing Grafana
 
@@ -478,5 +478,4 @@ This runs ~200 tests covering signature verification, authorization, preset reso
 ## Known quirks
 
 - **First launch is slow** (~15 min) — SteamCMD downloads ~10GB of game files. Subsequent launches reuse the cached files on the PVC.
-- **Navmesh warnings** in server logs are cosmetic — missing vehicle pathfinding tiles don't affect gameplay.
 - **ArgoCD syncs every 3 minutes** — push a change to `main` branch and wait, or force sync manually.
