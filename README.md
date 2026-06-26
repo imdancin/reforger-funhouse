@@ -9,10 +9,10 @@ Terraform + Kubernetes GitOps infrastructure for a dedicated Arma Reforger game 
 3. **GitHub Actions** runs `terraform apply` with `instance_count=1` via OIDC-based AWS credentials
 4. **Terraform** provisions a `c6i.xlarge` EC2 instance with a persistent 20GB EBS data volume
 5. **User data** bootstraps K3s and ArgoCD on the instance, writes `ready:<timestamp>` to SSM when done
-6. **The orchestrator** polls SSM + port 2001 every 30 seconds until ready, then posts connection details to Discord
+6. **The orchestrator** polls SSM bootstrap-status every 30 seconds until ready, then posts connection details to Discord
 7. **ArgoCD** pulls Helm manifests from this repo and deploys the game server pod
 8. **External Secrets Operator** injects passwords from AWS Secrets Manager into the pod at runtime
-9. **Idle Monitor** samples player count via RCON — after 30 minutes of zero players, invokes teardown (dispatches `instance_count=0`)
+9. **Idle Monitor** samples player count via BattlEye RCON (UDP) — after 30 minutes of zero players, invokes teardown (dispatches `instance_count=0`)
 
 The game server runs inside a container (`ghcr.io/acemod/arma-reforger`) on the K3s cluster with `hostNetwork: true`, binding directly to the EC2 host's network interfaces.
 
@@ -261,12 +261,14 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 |------|---------|
 | `main.py` | Launch automation script (terraform → SSH → log streaming) |
 | `deploy_lambdas.py` | One-command deployment of all control-plane Lambda functions |
+| `Dockerfile.idle-monitor` | Container image for the idle monitor (Python + BERCon client + Prometheus) |
 | `pyproject.toml` | Python project config (dependencies, pytest, Hypothesis settings) |
 | `providers.tf` | AWS provider and S3 backend config |
 | `.github/workflows/terraform-apply.yml` | GitHub Actions workflow triggered by `repository_dispatch` to run `terraform apply` |
+| `.github/workflows/build-idle-monitor.yml` | GitHub Actions workflow to build and push the idle monitor container image to GHCR |
 | `backend-resources.tf` | S3 state bucket and DynamoDB lock table |
 | `networking.tf` | VPC, subnet, internet gateway, route table |
-| `security-groups.tf` | Game ports (UDP 2001, 1999), Grafana (TCP 3000), and conditional SSH |
+| `security-groups.tf` | Game ports (UDP 2001, UDP 1999 RCON), Grafana (TCP 3000), and conditional SSH |
 | `compute.tf` | EC2 instance, EIP, bootstrap user_data, EBS volume |
 | `control-plane.tf` | Discord control plane infrastructure (API GW, Lambdas, Step Functions, DynamoDB) |
 | `iam.tf` | IAM roles for SSM and ESO |
@@ -276,13 +278,13 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 | `outputs.tf` | Terraform outputs (instance ID, public IP, control plane endpoint) |
 | `discord_control_plane/` | Python package: core logic, AWS adapters, Lambda handlers |
 | `discord_control_plane/core/` | Pure logic (verification, authorization, presets, state decisions, idle accounting) |
-| `discord_control_plane/adapters/` | AWS I/O (DynamoDB, SSM, Secrets Manager, Discord, GitHub) |
-| `discord_control_plane/handlers/` | Lambda entry points (launch, orchestrator tasks, teardown) |
+| `discord_control_plane/adapters/` | AWS I/O (DynamoDB, SSM, Secrets Manager, Discord, GitHub, BERCon RCON) |
+| `discord_control_plane/handlers/` | Lambda entry points (launch, orchestrator tasks, teardown) and idle monitor |
 | `cluster-manifests/` | Helm chart deployed by ArgoCD |
 | `cluster-manifests/values-freedomfighters.yaml` | Game config (scenario, mods, players) and monitoring/idle settings |
 | `cluster-manifests/values-proceduralcombat.yaml` | Alternate preset (Procedural Combat scenario) |
 | `cluster-manifests/templates/deployment.yaml` | Game server pod + PVC |
-| `cluster-manifests/templates/idle-monitor-cronjob.yaml` | Idle_Monitor CronJob (player count sampling, auto-teardown) |
+| `cluster-manifests/templates/idle-monitor-deployment.yaml` | Idle_Monitor Deployment (player count sampling via BattlEye RCON, auto-teardown) |
 | `cluster-manifests/templates/monitoring-*.yaml` | Prometheus, Grafana, kube-state-metrics, node-exporter manifests |
 | `cluster-manifests/templates/external-secrets.yaml` | ExternalSecret resources for game passwords |
 | `tests/` | Property-based and unit tests (pytest + Hypothesis) |
@@ -297,9 +299,9 @@ The Discord integration lets authorized friends launch and manage the server dir
 2. The `Launch_Handler` Lambda verifies the Ed25519 signature, checks an allowlist, and transitions the server state to `LAUNCHING`
 3. A Step Functions state machine resets SSM bootstrap-status to `"provisioning"`, then dispatches a `repository_dispatch` event to GitHub
 4. A GitHub Actions workflow (`terraform-apply.yml`) runs `terraform apply` with `instance_count=1` using OIDC-based AWS credentials
-5. The orchestrator polls SSM bootstrap-status and port 2001 every 30 seconds until the EC2 instance reports ready
+5. The orchestrator polls SSM bootstrap-status every 30 seconds until the EC2 instance reports ready
 6. Once ready, `MarkRunning` posts connection details back to Discord and transitions state to `RUNNING`
-7. An `Idle_Monitor` CronJob on the K3s cluster samples player count via RCON — after 30 minutes of zero players, it invokes the `Teardown_Handler` Lambda to destroy the instance
+7. An `Idle_Monitor` Deployment on the K3s cluster samples player count via BattlEye RCON (UDP) — after 30 minutes of zero players, it invokes the `Teardown_Handler` Lambda to destroy the instance
 
 ### Prerequisites
 
@@ -443,11 +445,13 @@ The bot responds to `/status` with:
 
 ### Idle auto-teardown
 
-The `Idle_Monitor` runs every minute on the cluster. If the player count stays at zero for 30 minutes (configurable via `idleMonitor.idleThresholdSeconds` in the values files), it invokes the `Teardown_Handler` which:
+The `Idle_Monitor` runs as a long-lived Deployment on the cluster, sampling RCON every 60 seconds. If the player count stays at zero for 30 minutes (configurable via `idleMonitor.idleThresholdSeconds` in the values files), it invokes the `Teardown_Handler` which:
 
 1. Dispatches `instance_count=0` to destroy the EC2 instance
 2. Posts a teardown notification to the configured Discord webhook
 3. The EBS game-data volume is preserved (saves are safe)
+
+The idle monitor container image (`ghcr.io/imdancin/reforger-funhouse-control-plane:latest`) is built automatically by the `build-idle-monitor.yml` workflow when files in `discord_control_plane/` are pushed to `main`. It uses the BattlEye RCON (BERCon) UDP protocol to query player count — this is the same protocol used by tools like BERcon and BattleMetrics.
 
 ### Running tests
 
@@ -469,7 +473,7 @@ This runs ~200 tests covering signature verification, authorization, preset reso
 - **GitHub Actions fails with IAM permission errors**: The OIDC deployer role needs permissions for all services Terraform manages. Check the inline policy on `github-actions-arma-deployer`.
 - **Orchestrator SUCCEEDED in ~6 seconds without provisioning**: This was the original bug. Ensure you've deployed the latest Lambda code (`python deploy_lambdas.py`) which includes the SSM bootstrap-status reset.
 - **Allowlist denials**: Confirm user/role IDs in the SSM parameter. IDs are snowflakes (18-digit numbers).
-- **Idle_Monitor not firing**: Ensure `idleMonitor.enabled: true` in your values file and that the RCON password secret (`arma-rcon-secret`) exists on the cluster. Also confirm DynamoDB state is `RUNNING` (teardown only triggers from RUNNING state).
+- **Idle_Monitor not firing**: Ensure `idleMonitor.enabled: true` in your values file and that the RCON password secret (`arma-rcon-secret`) exists on the cluster. The game server deployment must include `RCON_ADDRESS=0.0.0.0`, `RCON_PERMISSION=admin`, and `-rcon` in `ARMA_PARAMS` for BattlEye RCON to actually bind. Verify RCON is listening with `ss -ulnp | grep 1999` (it's UDP, not TCP). Also confirm DynamoDB state is `RUNNING` or `LAUNCHING` (teardown only triggers from those states). The `eso-reader` IAM user must have `lambda:InvokeFunction` permission on the teardown handler.
 
 ## Known quirks
 
