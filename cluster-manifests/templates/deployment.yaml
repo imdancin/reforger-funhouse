@@ -56,13 +56,17 @@ spec:
               value: "{{ .Values.game.modsList }}"
             - name: RCON_PORT
               value: "1999"
+            - name: RCON_ADDRESS
+              value: "0.0.0.0"
+            - name: RCON_PERMISSION
+              value: "admin"
             - name: RCON_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: arma-rcon-secret
                   key: rcon-password
             - name: ARMA_PARAMS
-              value: "-loadSessionSave"
+              value: "-loadSessionSave -rcon"
             - name: SERVER_VISIBLE
               value: "{{ .Values.game.visible }}"
             - name: GAME_PASSWORD
