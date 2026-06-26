@@ -19,7 +19,7 @@ game:
 
 idleMonitor:
   enabled: true
-  image: "ghcr.io/acemod/reforger-funhouse-control-plane:latest"
+  image: "ghcr.io/imdancin/reforger-funhouse-control-plane:latest"
   sampleIntervalSeconds: 60
   metricsPort: 8000
   idleThresholdSeconds: "1800"
