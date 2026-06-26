@@ -230,7 +230,8 @@ def sample_player_count(
                 sock.sendto(ack_packet, (host, port))
 
         if not response_parts:
-            raise RconError("No response received for 'players' command")
+            # An empty command ack (no body) typically means 0 players
+            return 0
 
         full_response = "".join(response_parts)
         return _parse_player_count(full_response)
