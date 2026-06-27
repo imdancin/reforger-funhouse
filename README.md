@@ -116,6 +116,7 @@ From any Discord channel where the bot is accessible:
 ```
 /launch                          # launches with default preset (Freedom Fighters)
 /launch preset:proceduralcombat  # launches with Procedural Combat preset
+/stop                            # stop the server and tear down the instance
 ```
 
 This triggers the full pipeline: SSM reset → GitHub dispatch → Terraform apply → EC2 boot → bootstrap → readiness check → Discord posts connection details.
@@ -294,7 +295,7 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 
 ## Discord Control Plane (Bot-Driven Launch)
 
-The Discord integration lets authorized friends launch and manage the server directly from a Discord channel using `/launch` and `/status` slash commands — no AWS access needed.
+The Discord integration lets authorized friends launch and manage the server directly from a Discord channel using `/launch`, `/status`, and `/stop` slash commands — no AWS access needed.
 
 ### How it works
 
@@ -380,24 +381,59 @@ You can find user IDs by enabling Developer Mode in Discord (Settings → Advanc
 
 #### 4. Register the slash commands
 
-Run the registration script (one-time, or after updating presets):
+Generate the command payloads:
 
 ```bash
 uv run python -c "
-from discord_control_plane.handlers.registration import build_launch_command_payload, build_status_command_payload
+from discord_control_plane.handlers.registration import (
+    build_launch_command_payload,
+    build_status_command_payload,
+    build_stop_command_payload,
+)
 import json
 print('=== /launch ===')
 print(json.dumps(build_launch_command_payload(), indent=2))
 print('=== /status ===')
 print(json.dumps(build_status_command_payload(), indent=2))
+print('=== /stop ===')
+print(json.dumps(build_stop_command_payload(), indent=2))
 "
 ```
 
-POST each command payload to `https://discord.com/api/v10/applications/{APP_ID}/commands` with your bot token as a Bearer header. Or use a tool like `curl`:
+Register commands to a specific guild (recommended — instant availability, no propagation delay). You'll need your guild ID (enable Developer Mode in Discord, right-click your server name → Copy Server ID).
+
+**Important:** Discord's API requires a `User-Agent` header in the format `DiscordBot (url, version)` or requests may be blocked by Cloudflare (error 40333).
+
+PowerShell example (guild-scoped):
+
+```powershell
+$token = "YOUR_BOT_TOKEN"
+$appId = "YOUR_APP_ID"
+$guildId = "YOUR_GUILD_ID"
+$headers = @{
+    "Authorization" = "Bot $token"
+    "User-Agent" = "DiscordBot (https://github.com/imdancin/reforger-funhouse, 1.0)"
+}
+
+# /launch
+$body = '{"name":"launch","description":"Launch the Arma Reforger server with a chosen preset","type":1,"options":[{"name":"preset","description":"Server preset to launch","type":3,"required":false,"choices":[{"name":"Freedom Fighters","value":"freedomfighters"},{"name":"Procedural Combat","value":"proceduralcombat"}]}]}'
+Invoke-RestMethod -Method Post -Uri "https://discord.com/api/v10/applications/$appId/guilds/$guildId/commands" -Headers $headers -Body $body -ContentType "application/json"
+
+# /status
+$body = '{"name":"status","description":"Check the current Arma Reforger server status","type":1,"options":[]}'
+Invoke-RestMethod -Method Post -Uri "https://discord.com/api/v10/applications/$appId/guilds/$guildId/commands" -Headers $headers -Body $body -ContentType "application/json"
+
+# /stop
+$body = '{"name":"stop","description":"Stop the Arma Reforger server and tear down the instance","type":1,"options":[]}'
+Invoke-RestMethod -Method Post -Uri "https://discord.com/api/v10/applications/$appId/guilds/$guildId/commands" -Headers $headers -Body $body -ContentType "application/json"
+```
+
+Or with `curl.exe` (on Windows) / `curl` (on Linux/macOS):
 
 ```bash
-curl -X POST "https://discord.com/api/v10/applications/YOUR_APP_ID/commands" \
+curl -X POST "https://discord.com/api/v10/applications/YOUR_APP_ID/guilds/YOUR_GUILD_ID/commands" \
   -H "Authorization: Bot YOUR_BOT_TOKEN" \
+  -H "User-Agent: DiscordBot (https://github.com/imdancin/reforger-funhouse, 1.0)" \
   -H "Content-Type: application/json" \
   -d @command.json
 ```
@@ -428,6 +464,7 @@ From any Discord channel where the bot is accessible:
 /launch                          # launches with default preset (Freedom Fighters)
 /launch preset:proceduralcombat  # launches with Procedural Combat preset
 /status                          # check current server status
+/stop                            # manually stop the server and tear down the instance
 ```
 
 The bot responds to `/launch` with:
@@ -440,6 +477,11 @@ The bot responds to `/status` with:
 - Current server state (offline, launching, running, tearing down)
 - Connection details (`<ip>:<port>`) when the server is running
 - The active preset name
+
+The bot responds to `/stop` with:
+- Confirmation that teardown has been initiated
+- An error if the server is not in a stoppable state (e.g. already offline)
+- Requires the same allowlist authorization as `/launch`
 
 ### Available presets
 
