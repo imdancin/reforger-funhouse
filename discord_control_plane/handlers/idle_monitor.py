@@ -164,6 +164,13 @@ def handle_sample(
 
     decision: IdleDecision = update_idle(state, player_count, now, threshold)
 
+    logger.info(
+        "Sample: players=%d, idle_since=%s, should_teardown=%s",
+        player_count,
+        decision.new_state.idle_since,
+        decision.should_teardown,
+    )
+
     if decision.should_teardown:
         try:
             client = boto3.client("lambda", region_name=aws_region)
