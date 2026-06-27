@@ -76,3 +76,23 @@ def build_status_command_payload() -> dict:
         "type": 1,  # CHAT_INPUT
         "options": [],
     }
+
+
+def build_stop_command_payload() -> dict:
+    """Build the Discord slash-command registration payload for /stop.
+
+    The /stop command has no options — it triggers a manual server teardown.
+    Requires the same authorization as /launch.
+
+    Returns
+    -------
+    dict
+        A JSON-serializable dictionary conforming to Discord's
+        Create Global Application Command request body.
+    """
+    return {
+        "name": "stop",
+        "description": "Stop the Arma Reforger server and tear down the instance",
+        "type": 1,  # CHAT_INPUT
+        "options": [],
+    }

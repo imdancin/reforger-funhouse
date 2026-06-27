@@ -18,7 +18,7 @@ game:
   networkViewDistance: "2500"
 
 idleMonitor:
-  enabled: true
+  enabled: false
   image: "ghcr.io/imdancin/reforger-funhouse-control-plane:latest"
   sampleIntervalSeconds: 60
   metricsPort: 8000

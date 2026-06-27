@@ -40,6 +40,7 @@ from discord_control_plane.core.responses import (
 )
 from discord_control_plane.core.verification import verify_signature
 from discord_control_plane.handlers.status_handler import handle_status
+from discord_control_plane.handlers.stop_handler import handle_stop
 
 
 _JSON_HEADERS = {"Content-Type": "application/json"}
@@ -257,6 +258,15 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     # /status — read-only, no auth needed
     if command_name == "status":
         return handle_status(state_store=state_store)
+
+    # /stop — authorized teardown
+    if command_name == "stop":
+        allowlist = load_allowlist()
+        return handle_stop(
+            interaction=interaction,
+            allowlist=allowlist,
+            state_store=state_store,
+        )
 
     # /launch — full auth + orchestration flow
     class _MessengerAdapter:
