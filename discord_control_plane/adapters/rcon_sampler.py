@@ -16,11 +16,14 @@ Packet types (first byte of payload):
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import socket
 import struct
 import zlib
+
+logger = logging.getLogger(__name__)
 
 
 class RconError(Exception):
@@ -102,30 +105,62 @@ def _parse_login_response(payload: bytes) -> bool:
 def _parse_player_count(response_text: str) -> int:
     """Parse the player count from a BERCon 'players' command response.
 
-    The response typically looks like:
+    Arma Reforger uses a modified BattlEye RCON protocol. The response may
+    come as server messages (type 0x02) rather than command responses, and
+    the format differs from Arma 3.
+
+    Arma 3 format:
         Players on server:
         [#] [IP Address]:[Port] [Ping] [GUID] [Name]
         ------------------------------------------
         0   123.45.67.89:2304  42  <guid> PlayerName
-        1   98.76.54.32:2304   31  <guid> AnotherPlayer
         (2 players in total)
 
-    We look for the "(N players in total)" line first, then fall back to
-    counting individual player lines.
+    Arma Reforger format (varies):
+        - May include noise like "Logged In! Client ID: #1" and
+          "Processing Command: Players"
+        - Player entries typically contain a numeric playerId and name
+        - No IP addresses or "(N players in total)" line
+
+    We try multiple strategies in order of confidence.
     """
-    # Strategy 1: Look for "(N players in total)" pattern
+    # Strategy 1: Look for "(N players in total)" pattern (Arma 3 style)
     total_match = re.search(r"\((\d+)\s+players?\s+in\s+total\)", response_text)
     if total_match:
         return int(total_match.group(1))
 
-    # Strategy 2: Count lines that look like player entries (start with a number
-    # followed by whitespace and an IP:port pattern)
-    player_lines = re.findall(
+    # Strategy 2: Arma 3 style — count lines with IP:port pattern
+    player_lines_a3 = re.findall(
         r"^\s*\d+\s+\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:\d+",
         response_text,
         re.MULTILINE,
     )
-    return len(player_lines)
+    if player_lines_a3:
+        return len(player_lines_a3)
+
+    # Strategy 3: Arma Reforger style — look for lines that contain a player
+    # entry. Filter out known noise lines (login messages, processing messages).
+    # Reforger player entries typically have a numeric ID followed by player info.
+    noise_patterns = [
+        r"Logged In",
+        r"Client ID",
+        r"Processing Command",
+        r"^\s*$",
+    ]
+    lines = response_text.strip().splitlines()
+    player_count = 0
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Skip known noise
+        if any(re.search(pat, stripped, re.IGNORECASE) for pat in noise_patterns):
+            continue
+        # A player entry should contain at least a numeric ID
+        if re.search(r"\d+", stripped):
+            player_count += 1
+
+    return player_count
 
 
 # ---------------------------------------------------------------------------
@@ -221,19 +256,28 @@ def sample_player_count(
                     sock.settimeout(0.5)
 
             # Server message: type 0x02, seq byte, then message
-            # We need to acknowledge these to stay connected
+            # We need to acknowledge these to stay connected.
+            # Arma Reforger sends player list data as server messages (0x02)
+            # rather than command responses (0x01), so we collect these too.
             elif payload[0] == 0x02 and len(payload) >= 2:
                 seq_byte = payload[1:2]
                 # Send ack: type 0x02 + received seq
                 ack_payload = b"\x02" + seq_byte
                 ack_packet = _build_packet(ack_payload)
                 sock.sendto(ack_packet, (host, port))
+                # Collect the message body (skip type byte + seq byte)
+                if len(payload) > 2:
+                    msg = payload[2:].decode("utf-8", errors="replace")
+                    response_parts.append(msg)
+                    if "players in total" in msg or "Players on server" in msg:
+                        sock.settimeout(0.5)
 
         if not response_parts:
             # An empty command ack (no body) typically means 0 players
             return 0
 
         full_response = "".join(response_parts)
+        logger.debug("RCON raw response: %r", full_response)
         return _parse_player_count(full_response)
 
     except socket.error as e:
