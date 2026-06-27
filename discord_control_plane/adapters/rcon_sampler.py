@@ -102,6 +102,25 @@ def _parse_login_response(payload: bytes) -> bool:
     return payload[0] == 0x00 and payload[1] == 0x01
 
 
+def _has_players_response_marker(response_text: str) -> bool:
+    """Return True if the text shows positive evidence of a 'players' response.
+
+    A genuine empty player list (0 players) is otherwise indistinguishable from
+    a failed/truncated read or login-only chatter. To avoid reporting a false
+    ``0`` (which previously caused active servers to be torn down), we only trust
+    a zero count when the response actually looks like it came from the 'players'
+    command — i.e. it contains a recognized header, total marker, or command echo.
+    """
+    lowered = response_text.lower()
+    if "players on server" in lowered:
+        return True
+    if "in total" in lowered:
+        return True
+    if "processing command" in lowered and "player" in lowered:
+        return True
+    return False
+
+
 def _parse_player_count(response_text: str) -> int:
     """Parse the player count from a BERCon 'players' command response.
 
@@ -160,7 +179,22 @@ def _parse_player_count(response_text: str) -> int:
         if re.search(r"\d+", stripped):
             player_count += 1
 
-    return player_count
+    if player_count > 0:
+        return player_count
+
+    # player_count == 0 from the heuristic. This is ambiguous: an empty player
+    # list and a failed/truncated read both produce zero non-noise lines. Only
+    # trust a zero when there is positive evidence this is a real 'players'
+    # response. Otherwise raise so the caller treats it as an error rather than
+    # accumulating idle time toward an automatic teardown.
+    if _has_players_response_marker(response_text):
+        return 0
+
+    raise RconError(
+        "Could not confirm player count from RCON response "
+        "(no recognizable player-list content); treating as a sampling error "
+        "rather than reporting zero players"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +262,11 @@ def sample_player_count(
         # Command ack: type 0x01 + seq + optional header + response body
         # Server message: type 0x02 + seq + message (needs ack from client)
         response_parts: list[str] = []
+        # Diagnostics: record what we actually saw on the wire so that an
+        # empty/unconfirmed sample (the failure mode behind the false-teardown
+        # incident) leaves a trace we can inspect after the fact.
+        packet_log: list[str] = []
+        empty_ack_count = 0
         while True:
             try:
                 data, _ = sock.recvfrom(4096)
@@ -235,6 +274,9 @@ def sample_player_count(
                 break
 
             payload = _validate_response(data)
+            packet_log.append(
+                f"type=0x{payload[0]:02x} len={len(payload)}" if payload else "empty"
+            )
             if len(payload) < 2:
                 continue
 
@@ -242,6 +284,7 @@ def sample_player_count(
             if payload[0] == 0x01:
                 if len(payload) <= 2:
                     # Empty ack (no response body) — command acknowledged
+                    empty_ack_count += 1
                     continue
                 # Check for multi-part header: 0x00 + num_packets + index
                 body_start = 2
@@ -272,13 +315,56 @@ def sample_player_count(
                     if "players in total" in msg or "Players on server" in msg:
                         sock.settimeout(0.5)
 
+        packet_summary = (
+            f"packets=[{', '.join(packet_log) or 'none'}] empty_acks={empty_ack_count}"
+        )
+
         if not response_parts:
-            # An empty command ack (no body) typically means 0 players
-            return 0
+            # No parseable response body was received. This is NOT a reliable
+            # signal of zero players — the command may have been dropped, the
+            # server may have stopped responding, or the response may have been
+            # lost. Returning 0 here previously caused active servers to be torn
+            # down. Treat it as a sampling error instead.
+            #
+            # Log the wire-level diagnostics at WARNING so that if this recurs
+            # (the suspected long-uptime RCON degradation) we capture exactly
+            # what the server sent — login succeeded but no players body came
+            # back. This is the smoking gun for the false-teardown root cause.
+            logger.warning(
+                "RCON 'players' returned no response body from %s:%d "
+                "(login succeeded). %s",
+                host,
+                port,
+                packet_summary,
+            )
+            raise RconError(
+                f"No response body received for 'players' command from "
+                f"{host}:{port}; treating as a sampling error rather than "
+                f"reporting zero players ({packet_summary})"
+            )
 
         full_response = "".join(response_parts)
-        logger.debug("RCON raw response: %r", full_response)
-        return _parse_player_count(full_response)
+        logger.debug(
+            "RCON raw response from %s:%d (%s): %r",
+            host,
+            port,
+            packet_summary,
+            full_response,
+        )
+        try:
+            return _parse_player_count(full_response)
+        except RconError:
+            # Got a response body but couldn't confirm a count. Capture the raw
+            # bytes so we can see what shape the (mis)parsed response took.
+            logger.warning(
+                "RCON 'players' response from %s:%d could not be confirmed "
+                "(%s). Raw response: %r",
+                host,
+                port,
+                packet_summary,
+                full_response,
+            )
+            raise
 
     except socket.error as e:
         if isinstance(e, socket.timeout):

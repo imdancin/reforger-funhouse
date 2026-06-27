@@ -191,11 +191,22 @@ def handle_error(state: IdleState, gauge: Gauge, error: RconError) -> IdleState:
     """Handle an RCON sampling error.
 
     Logs the error at warning level. Does NOT update the gauge (retains the
-    last successful value). Returns the IdleState unchanged — no idle-accounting
-    update is performed on error.
+    last successful value).
+
+    Resets idle accounting (``idle_since=None``). An RCON error means the
+    player count is *unknown* for this sample, so we must not let unknown
+    periods count toward an automatic teardown. Only an unbroken run of
+    confirmed, error-free zero-player samples spanning the idle threshold will
+    trigger teardown. This is the safety fix for the incident where transient
+    sampling failures were read as "zero players" and tore down an active
+    server.
     """
-    logger.warning("RCON sample failed: %s", error)
-    return state
+    logger.warning(
+        "RCON sample failed; resetting idle accounting (unknown player count "
+        "will not count toward teardown): %s",
+        error,
+    )
+    return IdleState(idle_since=None)
 
 
 # ---------------------------------------------------------------------------
@@ -221,17 +232,37 @@ def run_sample_loop(
     iterations (measured from completion of one sample to start of next).
     """
     state = IdleState(idle_since=None)
+    consecutive_errors = 0
 
     while True:
         try:
             player_count = sample_player_count(
                 host=rcon_host, port=rcon_port, password=rcon_password
             )
+            if consecutive_errors:
+                logger.info(
+                    "RCON sampling recovered after %d consecutive error(s); "
+                    "players=%d",
+                    consecutive_errors,
+                    player_count,
+                )
+                consecutive_errors = 0
             state = handle_sample(
                 state, gauge, player_count, time.time(),
                 idle_threshold, teardown_fn, aws_region,
             )
         except RconError as e:
+            consecutive_errors += 1
+            # Surface sustained sampling failures (the early signature of the
+            # long-uptime RCON degradation behind the false-teardown incident).
+            # Idle accounting is reset on error, so this can no longer trigger
+            # a teardown — but we want the streak visible in the logs.
+            if consecutive_errors == 1 or consecutive_errors % 5 == 0:
+                logger.warning(
+                    "RCON sampling failing: %d consecutive error(s). "
+                    "Idle accounting paused (no teardown while count is unknown).",
+                    consecutive_errors,
+                )
             state = handle_error(state, gauge, e)
 
         time.sleep(sample_interval)
