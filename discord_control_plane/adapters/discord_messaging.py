@@ -125,7 +125,7 @@ def edit_original(
 
 def post_webhook_notification(
     content: str,
-    secret_name: str = "arma-reforger/discord-webhook-url",
+    secret_name: str = "/arma-reforger/discord-channel-webhook-url",
     secrets_client=None,
 ) -> None:
     """Post a message via a Discord channel webhook.
@@ -137,7 +137,10 @@ def post_webhook_notification(
     Args:
         content: The message text to post.
         secret_name: The Secrets Manager secret name containing the webhook URL.
-            Defaults to "arma-reforger/discord-webhook-url".
+            Defaults to "/arma-reforger/discord-channel-webhook-url" — this must
+            match the secret defined in Terraform (control-plane.tf) and the ARN
+            scoped in the Lambda IAM policy, otherwise GetSecretValue is denied
+            and teardown notifications fail silently.
         secrets_client: Optional pre-configured boto3 Secrets Manager client.
             If None, a default client is created.
 
