@@ -16,6 +16,7 @@ game:
   serverMaxViewDistance: "2500"
   serverMinGrassDistance: "50"
   networkViewDistance: "2500"
+  VONCAnTransmitCrossFaction: "true"
 
 idleMonitor:
   enabled: false
