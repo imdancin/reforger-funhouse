@@ -19,7 +19,7 @@ import socket
 
 import boto3
 
-from discord_control_plane.adapters.discord_messaging import post_followup
+from discord_control_plane.adapters.discord_messaging import edit_original, post_followup
 from discord_control_plane.adapters.github_dispatch import dispatch_apply
 from discord_control_plane.adapters.scenario_store import set_active_scenario
 from discord_control_plane.adapters.state_store import StateStore, TransitionStatus
@@ -84,6 +84,27 @@ def handle_dispatch_apply(event: dict, context=None) -> dict:
 
     dispatch_apply(instance_count=1, active_scenario=preset)
     logger.info("GitHub dispatch sent: instance_count=1, scenario=%s", preset)
+
+    # Resolve the deferred /launch interaction now that the apply is dispatched.
+    # Editing the original response clears Discord's "thinking" spinner so the
+    # command no longer hangs until the server is fully ready. MarkRunning still
+    # posts the connection details as a follow-up once the server comes online.
+    application_id = event.get("application_id", "")
+    interaction_token = event.get("interaction_token", "")
+    if interaction_token:
+        try:
+            edit_original(
+                application_id=application_id,
+                interaction_token=interaction_token,
+                content=(
+                    "🚀 **Launch started!** The server is provisioning now and "
+                    "should be online in a few minutes (typically 5–8). I'll "
+                    "post the connection details here once it's ready."
+                ),
+            )
+        except Exception as exc:
+            logger.error("Failed to post launch-started notification: %s", exc)
+
     return event
 
 

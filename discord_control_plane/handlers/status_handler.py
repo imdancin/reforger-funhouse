@@ -92,8 +92,12 @@ def handle_status(*, state_store) -> dict[str, Any]:
         lines.append("")
         lines.append(f"🔗 **Connect:** `{ip}:{port}`")
 
-    # Add preset info if available
-    if record.preset:
+    # Add preset info only when the server is launching or running —
+    # an offline (or tearing-down) server has no meaningful active preset.
+    if record.preset and status_reply.state in (
+        ServerState.LAUNCHING,
+        ServerState.RUNNING,
+    ):
         lines.append(f"🎮 **Preset:** {record.preset}")
 
     content = "\n".join(lines)
