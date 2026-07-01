@@ -6,11 +6,11 @@ game:
   # Server visibility — false keeps it out of the public server browser
   visible: true
   # Admin Steam ID list
-  admins: "76561197984093036"
+  admins: "76561197984093036,76561197972367908,76561198009355986"
   # Supported platforms
   supportedPlatforms: "PLATFORM_PC,PLATFORM_XBL,PLATFORM_PSN"
   # Game properties
-  disableThirdPerson: "true"
+  disableThirdPerson: "false"
   battlEye: "false"
   fastValidation: "true"
   serverMaxViewDistance: "2500"
