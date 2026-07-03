@@ -14,7 +14,7 @@ Terraform + Kubernetes GitOps infrastructure for a dedicated Arma Reforger game 
 6. **The orchestrator** polls SSM bootstrap-status every 30 seconds until ready, then posts connection details to Discord
 7. **ArgoCD** pulls Helm manifests from this repo and deploys the game server pod
 8. **External Secrets Operator** injects passwords from AWS Secrets Manager into the pod at runtime
-9. **Idle Monitor** samples player count via BattlEye RCON (UDP) — after 30 minutes of zero players, invokes teardown (dispatches `instance_count=0`)
+9. **Metrics Exporter** samples player count via BattlEye RCON (UDP) and exposes it as the `arma_connected_players` Prometheus metric; teardown is manual via `/stop` (dispatches `instance_count=0`)
 
 The game server runs inside a container (`ghcr.io/acemod/arma-reforger`) on the K3s cluster with `hostNetwork: true`, binding directly to the EC2 host's network interfaces.
 
@@ -131,7 +131,7 @@ This runs `terraform apply` directly from your machine (bypasses the Discord/Git
 
 ### Tear down the server
 
-The idle monitor tears down automatically after 30 minutes of zero players. To tear down manually:
+Teardown is manual only (via `/stop` in Discord, or directly with Terraform):
 
 ```bash
 terraform apply -var "instance_count=0" -auto-approve
@@ -264,11 +264,11 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 |------|---------|
 | `main.py` | Launch automation script (terraform → SSH → log streaming) |
 | `deploy_lambdas.py` | One-command deployment of all control-plane Lambda functions |
-| `Dockerfile.idle-monitor` | Container image for the idle monitor (Python + BERCon client + Prometheus) |
+| `Dockerfile.metrics-exporter` | Container image for the RCON metrics-exporter pod (Python + BERCon client + Prometheus) |
 | `pyproject.toml` | Python project config (dependencies, pytest, Hypothesis settings) |
 | `providers.tf` | AWS provider and S3 backend config |
 | `.github/workflows/terraform-apply.yml` | GitHub Actions workflow triggered by `repository_dispatch` to run `terraform apply` |
-| `.github/workflows/build-idle-monitor.yml` | GitHub Actions workflow to build and push the idle monitor container image to GHCR |
+| `.github/workflows/build-metrics-exporter.yml` | GitHub Actions workflow to build and push the metrics-exporter container image to GHCR |
 | `.github/workflows/deploy-lambdas.yml` | GitHub Actions workflow to deploy control-plane Lambda code on merge to main |
 | `backend-resources.tf` | S3 state bucket and DynamoDB lock table |
 | `networking.tf` | VPC, subnet, internet gateway, route table |
@@ -281,14 +281,14 @@ No secrets appear in version control. `terraform.tfvars` is gitignored.
 | `vars.tf` | Variable declarations |
 | `outputs.tf` | Terraform outputs (instance ID, public IP, control plane endpoint) |
 | `discord_control_plane/` | Python package: core logic, AWS adapters, Lambda handlers |
-| `discord_control_plane/core/` | Pure logic (verification, authorization, presets, state decisions, idle accounting) |
+| `discord_control_plane/core/` | Pure logic (verification, authorization, presets, state decisions) |
 | `discord_control_plane/adapters/` | AWS I/O (DynamoDB, SSM, Secrets Manager, Discord, GitHub, BERCon RCON) |
-| `discord_control_plane/handlers/` | Lambda entry points (launch, orchestrator tasks, teardown) and idle monitor |
+| `discord_control_plane/handlers/` | Lambda entry points (launch, orchestrator tasks, teardown) and the metrics exporter |
 | `cluster-manifests/` | Helm chart deployed by ArgoCD |
-| `cluster-manifests/values-freedomfighters.yaml` | Game config (scenario, mods, players) and monitoring/idle settings |
+| `cluster-manifests/values-freedomfighters.yaml` | Game config (scenario, mods, players) and monitoring/metrics-exporter settings |
 | `cluster-manifests/values-proceduralcombat.yaml` | Alternate preset (Procedural Combat scenario) |
 | `cluster-manifests/templates/deployment.yaml` | Game server pod + PVC |
-| `cluster-manifests/templates/idle-monitor-deployment.yaml` | Idle_Monitor Deployment (player count sampling via BattlEye RCON, auto-teardown) |
+| `cluster-manifests/templates/metrics-exporter-*.yaml` | Standalone metrics-exporter Deployment + Service (player count sampling via BattlEye RCON) |
 | `cluster-manifests/templates/monitoring-*.yaml` | Prometheus, Grafana, kube-state-metrics, node-exporter manifests |
 | `cluster-manifests/templates/external-secrets.yaml` | ExternalSecret resources for game passwords |
 | `tests/` | Property-based and unit tests (pytest + Hypothesis) |
@@ -305,7 +305,7 @@ The Discord integration lets authorized friends launch and manage the server dir
 4. A GitHub Actions workflow (`terraform-apply.yml`) runs `terraform apply` with `instance_count=1` using OIDC-based AWS credentials
 5. The orchestrator polls SSM bootstrap-status every 30 seconds until the EC2 instance reports ready
 6. Once ready, `MarkRunning` posts connection details back to Discord and transitions state to `RUNNING`
-7. An `Idle_Monitor` Deployment on the K3s cluster samples player count via BattlEye RCON (UDP) — after 30 minutes of zero players, it invokes the `Teardown_Handler` Lambda to destroy the instance
+7. A standalone metrics-exporter pod samples player count via BattlEye RCON (UDP) and exposes it as the `arma_connected_players` Prometheus gauge; the server is stopped manually via `/stop` (no automatic idle teardown)
 
 ### Prerequisites
 
@@ -314,7 +314,7 @@ The Discord integration lets authorized friends launch and manage the server dir
   - The **Interactions Endpoint URL** set to the API Gateway output (see below)
   - The application's **Public Key** (hex string from the General Information page)
 - A fine-grained GitHub Personal Access Token with `contents: write` on this repo (for `repository_dispatch`)
-- A Discord channel webhook URL for teardown/idle notifications
+- A Discord channel webhook URL for teardown notifications
 
 ### Setup
 
@@ -490,15 +490,17 @@ The bot responds to `/stop` with:
 | `freedomfighters` (default) | `values-freedomfighters.yaml` | Freedom Fighters scenario |
 | `proceduralcombat` | `values-proceduralcombat.yaml` | Procedural Combat scenario |
 
-### Idle auto-teardown
+### Server teardown
 
-The `Idle_Monitor` runs as a long-lived Deployment on the cluster, sampling RCON every 60 seconds. If the player count stays at zero for 30 minutes (configurable via `idleMonitor.idleThresholdSeconds` in the values files), it invokes the `Teardown_Handler` which:
+Teardown is manual only — run `/stop` in Discord when you're done playing. The `Teardown_Handler`:
 
 1. Dispatches `instance_count=0` to destroy the EC2 instance
 2. Posts a teardown notification to the configured Discord webhook
 3. The EBS game-data volume is preserved (saves are safe)
 
-The idle monitor container image (`ghcr.io/imdancin/reforger-funhouse-control-plane:latest`) is built automatically by the `build-idle-monitor.yml` workflow when files in `discord_control_plane/` are pushed to `main`. It uses the BattlEye RCON (BERCon) UDP protocol to query player count — this is the same protocol used by tools like BERcon and BattleMetrics.
+### Player count metrics
+
+A standalone `metrics-exporter` Deployment runs alongside the game server pod (same node, `hostNetwork: true`, so it can reach RCON on `127.0.0.1:1999`), sampling RCON every 60 seconds (configurable via `metricsExporter.sampleIntervalSeconds` in the values files) and exposing the `arma_connected_players` Prometheus gauge for the standard monitoring stack (Prometheus/Grafana) to scrape. Keeping it as its own pod (rather than a sidecar) means the game server pod only ever contains game server activity, and the exporter can be restarted, debugged, or have its logs inspected independently. The image (`ghcr.io/imdancin/reforger-funhouse-metrics-exporter:latest`) is built automatically by the `build-metrics-exporter.yml` workflow when files in `discord_control_plane/` are pushed to `main`. It uses the BattlEye RCON (BERCon) UDP protocol to query player count — this is the same protocol used by tools like BERcon and BattleMetrics.
 
 ### Running tests
 
@@ -509,7 +511,7 @@ uv sync --extra dev
 uv run pytest tests/ -v
 ```
 
-This runs ~200 tests covering signature verification, authorization, preset resolution, state machine logic, idle accounting, handler wiring, and Terraform structural assertions.
+This runs ~230 tests covering signature verification, authorization, preset resolution, state machine logic, handler wiring, and Terraform/Helm structural assertions.
 
 ### Troubleshooting
 
@@ -520,7 +522,7 @@ This runs ~200 tests covering signature verification, authorization, preset reso
 - **GitHub Actions fails with IAM permission errors**: The OIDC deployer role needs permissions for all services Terraform manages. Check the inline policy on `github-actions-arma-deployer`.
 - **Orchestrator SUCCEEDED in ~6 seconds without provisioning**: This was the original bug. Ensure you've deployed the latest Lambda code (`python deploy_lambdas.py`) which includes the SSM bootstrap-status reset.
 - **Allowlist denials**: Confirm user/role IDs in the SSM parameter. IDs are snowflakes (18-digit numbers).
-- **Idle_Monitor not firing**: Ensure `idleMonitor.enabled: true` in your values file and that the RCON password secret (`arma-rcon-secret`) exists on the cluster. The game server deployment must include `RCON_ADDRESS=0.0.0.0`, `RCON_PERMISSION=admin`, and `-rcon` in `ARMA_PARAMS` for BattlEye RCON to actually bind. Verify RCON is listening with `ss -ulnp | grep 1999` (it's UDP, not TCP). Also confirm DynamoDB state is `RUNNING` or `LAUNCHING` (teardown only triggers from those states). The `eso-reader` IAM user must have `lambda:InvokeFunction` permission on the teardown handler.
+- **`arma_connected_players` not showing up in Grafana**: Ensure the RCON password secret (`arma-rcon-secret`) exists on the cluster. The game server deployment must include `RCON_ADDRESS=0.0.0.0`, `RCON_PERMISSION=admin`, and `-rcon` in `ARMA_PARAMS` for BattlEye RCON to actually bind. Verify RCON is listening with `ss -ulnp | grep 1999` (it's UDP, not TCP). Check the metrics-exporter pod's logs (`kubectl logs deploy/metrics-exporter`) for RCON sampling errors.
 
 ## Adding a new scenario (contributing a preset)
 
@@ -546,7 +548,7 @@ game:
 
 You can find the `scenarioId` in the Arma Reforger Workbench or from the mod's workshop page. The `modsList` is a comma-separated list of mod GUIDs (the hex IDs from the Workshop URL or `ServerData.json`).
 
-Leave the `idleMonitor:` and `monitoring:` sections unchanged — just copy them from an existing file.
+Leave the `metricsExporter:` and `monitoring:` sections unchanged — just copy them from an existing file.
 
 ### 2. Register the preset in code
 

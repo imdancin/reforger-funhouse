@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: metrics-exporter
+  namespace: default
+  labels:
+    app: metrics-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: metrics-exporter
+  template:
+    metadata:
+      labels:
+        app: metrics-exporter
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: metrics-exporter
+          image: "{{ .Values.metricsExporter.image }}"
+          command:
+            - python
+            - -m
+            - discord_control_plane.handlers.metrics_exporter
+          ports:
+            - containerPort: {{ .Values.metricsExporter.metricsPort }}
+              protocol: TCP
+              name: metrics
+          env:
+            - name: RCON_HOST
+              value: "127.0.0.1"
+            - name: RCON_PORT
+              value: "1999"
+            - name: RCON_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: arma-rcon-secret
+                  key: rcon-password
+            - name: SAMPLE_INTERVAL_SECONDS
+              value: "{{ .Values.metricsExporter.sampleIntervalSeconds }}"
+            - name: METRICS_PORT
+              value: "{{ .Values.metricsExporter.metricsPort }}"
+          resources:
+            requests:
+              cpu: "{{ .Values.metricsExporter.resources.requests.cpu }}"
+              memory: "{{ .Values.metricsExporter.resources.requests.memory }}"
+            limits:
+              cpu: "{{ .Values.metricsExporter.resources.limits.cpu }}"
+              memory: "{{ .Values.metricsExporter.resources.limits.memory }}"

@@ -7,8 +7,7 @@ finalizing state and posting a notification via the Discord channel webhook.
 On post-destroy failure: the instance is NOT recreated, the current state is retained,
 and a failure message (with reason) is posted to the Discord channel.
 
-This handler is invoked by the Idle_Monitor CronJob via the AWS SDK when the idle
-threshold is reached.
+This handler is invoked directly by the /stop command handler.
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ class TeardownError(Exception):
 
 
 def handle_teardown(
-    source: str = "idle_monitor",
+    source: str = "discord_stop",
     state_store: StateStore | None = None,
     secrets_client=None,
 ) -> dict:
@@ -58,7 +57,7 @@ def handle_teardown(
         - Post a failure message with the reason.
 
     Args:
-        source: Identifier of what triggered the teardown (e.g. "idle_monitor").
+        source: Identifier of what triggered the teardown (e.g. "discord_stop").
         state_store: Optional StateStore instance (created with defaults if None).
         secrets_client: Optional boto3 Secrets Manager client for adapter calls.
 
@@ -207,16 +206,16 @@ def _post_failure_notification(reason: str) -> None:
 def lambda_handler(event: dict, context) -> dict:
     """AWS Lambda handler for the Teardown_Handler.
 
-    Invoked by the Idle_Monitor CronJob (or manually) via the AWS SDK
-    lambda:InvokeFunction.
+    Invoked manually via the AWS SDK lambda:InvokeFunction, or in-process by
+    the /stop command handler.
 
     Args:
         event: Lambda invocation event. May contain:
-            - "source": string identifying the caller (default: "idle_monitor")
+            - "source": string identifying the caller (default: "discord_stop")
         context: Lambda context object (unused).
 
     Returns:
         dict with teardown result status.
     """
-    source = event.get("source", "idle_monitor")
+    source = event.get("source", "discord_stop")
     return handle_teardown(source=source)

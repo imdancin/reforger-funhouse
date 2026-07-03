@@ -34,11 +34,9 @@ data:
         static_configs:
           - targets: ['localhost:10250']
 
-{{- if .Values.idleMonitor.enabled }}
-      - job_name: 'idle-monitor'
+      - job_name: 'metrics-exporter'
         static_configs:
-          - targets: ['idle-monitor-metrics:{{ .Values.idleMonitor.metricsPort }}']
-{{- end }}
+          - targets: ['metrics-exporter:{{ .Values.metricsExporter.metricsPort }}']
 ---
 apiVersion: v1
 kind: PersistentVolume

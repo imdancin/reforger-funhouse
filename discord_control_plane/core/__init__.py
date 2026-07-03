@@ -4,7 +4,6 @@ from discord_control_plane.core.models import (
     Allowlist,
     ConnectionDetails,
     DEFAULT_PRESET,
-    IdleState,
     InteractionResponse,
     InteractionResponseType,
     LaunchDecision,
@@ -25,11 +24,6 @@ from discord_control_plane.core.polling import (
     next_wait,
     should_continue,
 )
-from discord_control_plane.core.idle import (
-    DEFAULT_IDLE_THRESHOLD_SECONDS,
-    IdleDecision,
-    update_idle,
-)
 from discord_control_plane.core.responses import (
     build_deferred_response,
     build_denial_response,
@@ -40,10 +34,7 @@ from discord_control_plane.core.responses import (
 __all__ = [
     "Allowlist",
     "ConnectionDetails",
-    "DEFAULT_IDLE_THRESHOLD_SECONDS",
     "DEFAULT_PRESET",
-    "IdleDecision",
-    "IdleState",
     "InteractionResponse",
     "InteractionResponseType",
     "LaunchDecision",
@@ -65,6 +56,5 @@ __all__ = [
     "next_wait",
     "should_continue",
     "should_retain_running",
-    "update_idle",
     "verify_signature",
 ]

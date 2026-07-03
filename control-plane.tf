@@ -28,12 +28,6 @@ variable "launch_timeout_seconds" {
   description = "Maximum seconds to wait for the server to reach RUNNING before timing out"
 }
 
-variable "idle_threshold_minutes" {
-  type        = number
-  default     = 30
-  description = "Minutes of zero players before auto-teardown is triggered"
-}
-
 # ─── DynamoDB: Server State Store ─────────────────────────────────────────────
 
 resource "aws_dynamodb_table" "arma_server_state" {
@@ -86,7 +80,7 @@ resource "aws_secretsmanager_secret" "github_dispatch_token" {
 resource "aws_secretsmanager_secret" "discord_channel_webhook_url" {
   name                    = "/arma-reforger/discord-channel-webhook-url"
   recovery_window_in_days = 0
-  description             = "Discord channel webhook URL for teardown and idle notifications"
+  description             = "Discord channel webhook URL for teardown notifications"
 }
 
 # ─── IAM: Lambda Execution Role ───────────────────────────────────────────────
@@ -606,27 +600,6 @@ resource "aws_lambda_permission" "apigw_invoke_launch_handler" {
   source_arn    = "${aws_apigatewayv2_api.control_plane.execution_arn}/*/*"
 }
 
-# ─── IAM: EC2 Instance Role — Teardown_Handler Invoke Permission ──────────────
-# The Idle_Monitor on the EC2 instance needs to invoke exactly the Teardown_Handler.
-# This is scoped to only that single function ARN (least-privilege).
-
-resource "aws_iam_role_policy" "ssm_role_invoke_teardown" {
-  name = "arma-server-invoke-teardown-handler"
-  role = aws_iam_role.ssm_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "AllowInvokeTeardownHandler"
-        Effect   = "Allow"
-        Action   = "lambda:InvokeFunction"
-        Resource = aws_lambda_function.teardown_handler.arn
-      }
-    ]
-  })
-}
-
 # ─── Outputs ──────────────────────────────────────────────────────────────────
 
 output "control_plane_api_endpoint" {
@@ -640,7 +613,7 @@ output "launch_orchestrator_arn" {
 }
 
 output "teardown_handler_arn" {
-  description = "ARN of the Teardown_Handler Lambda (referenced by Idle_Monitor)"
+  description = "ARN of the Teardown_Handler Lambda"
   value       = aws_lambda_function.teardown_handler.arn
 }
 

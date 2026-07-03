@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: metrics-exporter
+  namespace: default
+  labels:
+    app: metrics-exporter
+spec:
+  type: ClusterIP
+  selector:
+    app: metrics-exporter
+  ports:
+    - port: {{ .Values.metricsExporter.metricsPort }}
+      targetPort: {{ .Values.metricsExporter.metricsPort }}
+      protocol: TCP
+      name: metrics
