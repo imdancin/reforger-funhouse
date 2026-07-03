@@ -23,6 +23,27 @@ def build_deferred_response() -> InteractionResponse:
     return InteractionResponse(type=InteractionResponseType.DEFERRED_CHANNEL_MESSAGE)
 
 
+def build_launch_started_response(estimate: str = "5–8 minutes") -> InteractionResponse:
+    """Build the immediate /launch acknowledgement (type 4).
+
+    Returned synchronously within Discord's 3-second window. The connection
+    details are posted later as a follow-up by the orchestrator's MarkRunning
+    step once the server is RUNNING.
+
+    Args:
+        estimate: Human-readable estimate of how long the server takes to come
+            online. Defaults to the typical provisioning window.
+    """
+    return InteractionResponse(
+        type=InteractionResponseType.CHANNEL_MESSAGE,
+        content=(
+            "🚀 **Server startup initiated!** The server is provisioning now and "
+            f"should be online in about {estimate}. I'll post the connection "
+            "details here once it's ready."
+        ),
+    )
+
+
 def build_denial_response(
     reason: str = "You are not authorized to use this command.",
 ) -> InteractionResponse:

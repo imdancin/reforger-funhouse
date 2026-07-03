@@ -16,7 +16,10 @@ Orchestrates the Discord interaction flow:
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
+
+import boto3
 
 from discord_control_plane.adapters.allowlist_loader import load_allowlist
 from discord_control_plane.adapters import discord_messaging
@@ -33,9 +36,9 @@ from discord_control_plane.core.models import (
 )
 from discord_control_plane.core.presets import resolve_preset
 from discord_control_plane.core.responses import (
-    build_deferred_response,
     build_denial_response,
     build_error_response,
+    build_launch_started_response,
     build_pong_response,
 )
 from discord_control_plane.core.verification import verify_signature
@@ -44,6 +47,48 @@ from discord_control_plane.handlers.stop_handler import handle_stop
 
 
 _JSON_HEADERS = {"Content-Type": "application/json"}
+
+# ---------------------------------------------------------------------------
+# AWS clients created at module INIT time.
+#
+# With SnapStart, module-level initialization runs once and is captured in the
+# execution-environment snapshot. Creating the boto3 clients here (rather than
+# per-invocation) means botocore's service models are already loaded in the
+# snapshot, so restored invocations skip that CPU-heavy work. This is the
+# difference that keeps the /launch acknowledgement inside Discord's 3-second
+# deadline on a cold restore.
+#
+# region_name is provided explicitly so the module can be imported locally
+# (and under test) without AWS_REGION set. Client creation does not require
+# credentials — those are resolved lazily at call time.
+# ---------------------------------------------------------------------------
+
+_AWS_REGION = os.environ.get("AWS_REGION", "us-west-2")
+
+
+def _init_client(service_name: str):
+    """Create a boto3 client at INIT for SnapStart priming.
+
+    On Lambda the execution role provides credentials during INIT, so this
+    succeeds and the built client (with its loaded service model) is captured
+    in the SnapStart snapshot. In local/test environments where credentials
+    can't be resolved, this returns None and callers fall back to lazy
+    creation via _client().
+    """
+    try:
+        return boto3.client(service_name, region_name=_AWS_REGION)
+    except Exception:
+        return None
+
+
+def _client(service_name: str, primed):
+    """Return the INIT-primed client, or lazily create one if priming failed."""
+    return primed if primed is not None else boto3.client(service_name, region_name=_AWS_REGION)
+
+
+_SSM_CLIENT = _init_client("ssm")
+_DDB_CLIENT = _init_client("dynamodb")
+_SFN_CLIENT = _init_client("stepfunctions")
 
 
 def _serialize_response(response) -> dict[str, Any]:
@@ -175,8 +220,9 @@ def handle_interaction(
         error_resp = build_error_response(content)
         return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(error_resp))}
 
-    # 7. Start the LaunchOrchestrator Step Functions execution
-    #    The orchestrator handles sending notifications to Discord.
+    # 7. Start the LaunchOrchestrator Step Functions execution.
+    #    The orchestrator provisions the server and posts the connection
+    #    details as a follow-up once it is RUNNING.
     try:
         step_functions_starter(
             input_data={
@@ -187,10 +233,26 @@ def handle_interaction(
         )
     except Exception as e:
         print(f"[ERROR] Failed to start Step Functions: {e}")
+        # Roll the lock back to OFFLINE so the failed launch can be retried
+        # rather than leaving the server stuck in LAUNCHING.
+        try:
+            state_store.try_transition(
+                expected_state=ServerState.LAUNCHING.value,
+                new_state=ServerState.OFFLINE.value,
+                attrs={"preset": "", "interaction_token": None, "channel_id": None},
+                version=transition_result.record.version,
+            )
+        except Exception as rollback_err:
+            print(f"[ERROR] Failed to roll back LAUNCHING lock: {rollback_err}")
+        error_resp = build_error_response(
+            "Failed to start the launch. Please try again in a moment."
+        )
+        return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(error_resp))}
 
-    # 8. Return deferred ack (type 5) within 3 seconds
-    deferred = build_deferred_response()
-    return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(deferred))}
+    # 8. Acknowledge immediately (type 4) with an informative message, well
+    #    inside Discord's 3-second deadline.
+    started = build_launch_started_response()
+    return {"statusCode": 200, "headers": _JSON_HEADERS, "body": json.dumps(_serialize_response(started))}
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +314,13 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     orchestrator_arn = os.environ.get("ORCHESTRATOR_ARN", "")
     application_id = os.environ.get("DISCORD_APPLICATION_ID", "")
 
-    state_store = StateStore(table_name=table_name)
+    # Resolve the INIT-primed clients so restored invocations skip botocore
+    # service-model loading (the main cost that pushed /launch past 3s).
+    ssm_client = _client("ssm", _SSM_CLIENT)
+    ddb_client = _client("dynamodb", _DDB_CLIENT)
+    sfn_client = _client("stepfunctions", _SFN_CLIENT)
+
+    state_store = StateStore(table_name=table_name, dynamodb_client=ddb_client)
     command_name = interaction.get("data", {}).get("name", "")
 
     # /status — read-only, no auth needed
@@ -261,7 +329,7 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
 
     # /stop — authorized teardown
     if command_name == "stop":
-        allowlist = load_allowlist()
+        allowlist = load_allowlist(ssm_client=ssm_client)
         return handle_stop(
             interaction=interaction,
             allowlist=allowlist,
@@ -276,8 +344,6 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
     discord_messenger = _MessengerAdapter()
 
     def step_functions_starter(input_data: dict):
-        import boto3
-        sfn_client = boto3.client("stepfunctions")
         sfn_client.start_execution(
             stateMachineArn=orchestrator_arn,
             input=json.dumps({
@@ -291,7 +357,7 @@ def lambda_handler(event: dict, context) -> dict[str, Any]:
         signature=signature,
         timestamp=timestamp,
         public_key_hex=public_key_hex,
-        allowlist_loader=load_allowlist,
+        allowlist_loader=lambda: load_allowlist(ssm_client=ssm_client),
         state_store=state_store,
         step_functions_starter=step_functions_starter,
         discord_messenger=discord_messenger,
