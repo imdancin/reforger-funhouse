@@ -18,14 +18,10 @@ game:
   networkViewDistance: "2500"
   VONCanTransmitCrossFaction: "true"
 
-idleMonitor:
-  enabled: false
-  image: "ghcr.io/imdancin/reforger-funhouse-control-plane:latest"
+metricsExporter:
+  image: "ghcr.io/imdancin/reforger-funhouse-metrics-exporter:latest"
   sampleIntervalSeconds: 60
-  metricsPort: 8000
-  idleThresholdSeconds: "1800"
-  teardownFunctionName: "arma-teardown-handler"
-  awsRegion: "us-west-2"
+  metricsPort: 9877
   resources:
     requests:
       cpu: "50m"

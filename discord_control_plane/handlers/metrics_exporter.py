@@ -1,9 +1,11 @@
-"""Idle monitor handler — long-running entry point.
+"""Standalone RCON metrics exporter — long-running entry point.
 
-Orchestrates the RCON sampling loop and Prometheus metrics server. Reads
-configuration from environment variables, exposes an `arma_connected_players`
-Prometheus gauge on an HTTP `/metrics` endpoint, and will (in later tasks)
-run the continuous sampling loop with idle-accounting logic.
+Continuously samples the Arma Reforger server's connected player count via
+BattlEye RCON and exposes it as the `arma_connected_players` Prometheus gauge
+on an HTTP `/metrics` endpoint. This is intentionally minimal: no idle
+accounting, no teardown logic — just the metric, for the standard monitoring
+stack (Prometheus/Grafana) to scrape alongside node-exporter and
+kube-state-metrics.
 """
 
 from __future__ import annotations
@@ -15,7 +17,6 @@ import time
 from typing import Callable, Tuple
 from wsgiref.simple_server import make_server
 
-import boto3
 from prometheus_client import REGISTRY, Gauge
 from prometheus_client.exposition import (
     ThreadingWSGIServer,
@@ -26,8 +27,6 @@ from prometheus_client.exposition import (
 from prometheus_client.registry import Collector
 
 from discord_control_plane.adapters.rcon_sampler import RconError, sample_player_count
-from discord_control_plane.core.idle import IdleDecision, update_idle
-from discord_control_plane.core.models import IdleState
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +79,9 @@ arma_connected_players: Gauge = Gauge(
 def make_metrics_app(registry: Collector = REGISTRY) -> Callable:
     """Create a WSGI app that serves metrics only on ``/metrics``.
 
-    - GET /metrics → 200 with Prometheus text exposition format
-    - Any other path → 404
-    - Non-GET method on /metrics → 405
+    - GET /metrics -> 200 with Prometheus text exposition format
+    - Any other path -> 404
+    - Non-GET method on /metrics -> 405
     """
 
     def metrics_app(environ, start_response):
@@ -106,7 +105,6 @@ def make_metrics_app(registry: Collector = REGISTRY) -> Callable:
             start_response(status, headers)
             return [output]
 
-        # Serve Prometheus metrics
         accept_header = environ.get("HTTP_ACCEPT")
         accept_encoding_header = environ.get("HTTP_ACCEPT_ENCODING")
         params = {}
@@ -140,76 +138,6 @@ def start_metrics_server(
 
 
 # ---------------------------------------------------------------------------
-# Sample handling
-# ---------------------------------------------------------------------------
-
-
-def handle_sample(
-    state: IdleState,
-    gauge: Gauge,
-    player_count: int,
-    now: float,
-    threshold: float,
-    teardown_fn: str,
-    aws_region: str,
-) -> IdleState:
-    """Process a successful RCON sample.
-
-    Updates the Prometheus gauge, runs idle-accounting logic, and triggers
-    the teardown Lambda if the idle threshold has been reached.
-
-    Returns the new IdleState after accounting.
-    """
-    gauge.set(player_count)
-
-    decision: IdleDecision = update_idle(state, player_count, now, threshold)
-
-    logger.info(
-        "Sample: players=%d, idle_since=%s, should_teardown=%s",
-        player_count,
-        decision.new_state.idle_since,
-        decision.should_teardown,
-    )
-
-    if decision.should_teardown:
-        try:
-            client = boto3.client("lambda", region_name=aws_region)
-            client.invoke(
-                FunctionName=teardown_fn,
-                InvocationType="Event",
-            )
-            logger.info("Teardown Lambda invoked: %s", teardown_fn)
-        except Exception:
-            logger.exception(
-                "Failed to invoke teardown Lambda: %s", teardown_fn
-            )
-
-    return decision.new_state
-
-
-def handle_error(state: IdleState, gauge: Gauge, error: RconError) -> IdleState:
-    """Handle an RCON sampling error.
-
-    Logs the error at warning level. Does NOT update the gauge (retains the
-    last successful value).
-
-    Resets idle accounting (``idle_since=None``). An RCON error means the
-    player count is *unknown* for this sample, so we must not let unknown
-    periods count toward an automatic teardown. Only an unbroken run of
-    confirmed, error-free zero-player samples spanning the idle threshold will
-    trigger teardown. This is the safety fix for the incident where transient
-    sampling failures were read as "zero players" and tore down an active
-    server.
-    """
-    logger.warning(
-        "RCON sample failed; resetting idle accounting (unknown player count "
-        "will not count toward teardown): %s",
-        error,
-    )
-    return IdleState(idle_since=None)
-
-
-# ---------------------------------------------------------------------------
 # Sampling loop
 # ---------------------------------------------------------------------------
 
@@ -217,21 +145,16 @@ def handle_error(state: IdleState, gauge: Gauge, error: RconError) -> IdleState:
 def run_sample_loop(
     gauge: Gauge,
     sample_interval: int,
-    idle_threshold: float,
     rcon_host: str,
     rcon_port: int,
     rcon_password: str,
-    teardown_fn: str,
-    aws_region: str,
 ) -> None:
     """Run the continuous RCON sampling loop.
 
-    Initializes idle state and loops forever: samples the player count via
-    RCON, updates the gauge and idle-accounting on success, or logs and
-    preserves state on error. Sleeps for ``sample_interval`` seconds between
-    iterations (measured from completion of one sample to start of next).
+    Samples the player count via RCON and updates the gauge on success. On
+    error, logs and retains the gauge's last successfully observed value.
+    Sleeps for ``sample_interval`` seconds between iterations.
     """
-    state = IdleState(idle_since=None)
     consecutive_errors = 0
 
     while True:
@@ -247,23 +170,17 @@ def run_sample_loop(
                     player_count,
                 )
                 consecutive_errors = 0
-            state = handle_sample(
-                state, gauge, player_count, time.time(),
-                idle_threshold, teardown_fn, aws_region,
-            )
+            gauge.set(player_count)
+            logger.debug("Sample: players=%d", player_count)
         except RconError as e:
             consecutive_errors += 1
-            # Surface sustained sampling failures (the early signature of the
-            # long-uptime RCON degradation behind the false-teardown incident).
-            # Idle accounting is reset on error, so this can no longer trigger
-            # a teardown — but we want the streak visible in the logs.
             if consecutive_errors == 1 or consecutive_errors % 5 == 0:
                 logger.warning(
                     "RCON sampling failing: %d consecutive error(s). "
-                    "Idle accounting paused (no teardown while count is unknown).",
+                    "Gauge retains last known value: %s",
                     consecutive_errors,
+                    e,
                 )
-            state = handle_error(state, gauge, e)
 
         time.sleep(sample_interval)
 
@@ -274,7 +191,7 @@ def run_sample_loop(
 
 
 def main() -> None:
-    """Read configuration from environment and start the idle monitor."""
+    """Read configuration from environment and start the metrics exporter."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -284,39 +201,30 @@ def main() -> None:
         int(os.environ.get("SAMPLE_INTERVAL_SECONDS", "60"))
     )
     metrics_port = validate_metrics_port(
-        int(os.environ.get("METRICS_PORT", "8000"))
+        int(os.environ.get("METRICS_PORT", "9877"))
     )
-    idle_threshold = int(os.environ.get("IDLE_THRESHOLD_SECONDS", "1800"))
     rcon_host = os.environ.get("RCON_HOST", "127.0.0.1")
     rcon_port = int(os.environ.get("RCON_PORT", "1999"))
     rcon_password = os.environ.get("RCON_PASSWORD", "")
-    teardown_function_name = os.environ.get("TEARDOWN_FUNCTION_NAME", "")
-    aws_region = os.environ.get("AWS_REGION", "")
 
     logger.info(
-        "Idle monitor starting: sample_interval=%ds, metrics_port=%d, "
-        "idle_threshold=%ds, rcon=%s:%d",
+        "Metrics exporter starting: sample_interval=%ds, metrics_port=%d, "
+        "rcon=%s:%d",
         sample_interval,
         metrics_port,
-        idle_threshold,
         rcon_host,
         rcon_port,
     )
 
-    # Start the metrics HTTP server in a daemon thread
-    httpd, metrics_thread = start_metrics_server(metrics_port)
+    start_metrics_server(metrics_port)
     logger.info("Metrics server started on port %d", metrics_port)
 
-    # Start the continuous RCON sampling loop (blocks forever)
     run_sample_loop(
         gauge=arma_connected_players,
         sample_interval=sample_interval,
-        idle_threshold=idle_threshold,
         rcon_host=rcon_host,
         rcon_port=rcon_port,
         rcon_password=rcon_password,
-        teardown_fn=teardown_function_name,
-        aws_region=aws_region,
     )
 
 

@@ -96,18 +96,6 @@ class ConnectionDetails:
 
 
 # ---------------------------------------------------------------------------
-# Idle monitoring
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class IdleState:
-    """Tracks when the player count last became zero."""
-
-    idle_since: float | None  # epoch seconds; None when players are connected
-
-
-# ---------------------------------------------------------------------------
 # Launch request / decision
 # ---------------------------------------------------------------------------
 

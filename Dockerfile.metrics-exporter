@@ -1,0 +1,16 @@
+FROM python:3.13-slim
+
+WORKDIR /app
+
+# Install only the runtime dependencies needed by the metrics exporter
+RUN pip install --no-cache-dir \
+    prometheus_client>=0.21.0
+
+# Copy the control plane package
+COPY discord_control_plane/ /app/discord_control_plane/
+
+# Expose metrics port
+EXPOSE 9877
+
+# Run the metrics exporter
+ENTRYPOINT ["python", "-m", "discord_control_plane.handlers.metrics_exporter"]

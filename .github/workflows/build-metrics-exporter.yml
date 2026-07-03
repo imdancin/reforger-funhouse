@@ -1,17 +1,17 @@
-name: Build Idle Monitor Image
+name: Build Metrics Exporter Image
 
 on:
   push:
     branches: [main]
     paths:
       - "discord_control_plane/**"
-      - "Dockerfile.idle-monitor"
-      - ".github/workflows/build-idle-monitor.yml"
+      - "Dockerfile.metrics-exporter"
+      - ".github/workflows/build-metrics-exporter.yml"
   workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}-control-plane
+  IMAGE_NAME: ${{ github.repository }}-metrics-exporter
 
 jobs:
   build-and-push:
@@ -44,7 +44,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.idle-monitor
+          file: Dockerfile.metrics-exporter
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

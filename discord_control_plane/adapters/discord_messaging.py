@@ -4,7 +4,7 @@ This module handles two Discord messaging paths:
 
 1. Interaction-token follow-ups (POST/PATCH) — used during the 15-minute window
    after a deferred acknowledgement to post launch progress and connection details.
-2. Channel-webhook notifications (POST) — used for teardown/idle notifications that
+2. Channel-webhook notifications (POST) — used for teardown notifications that
    occur after the interaction token has expired.
 
 Uses urllib.request for HTTP calls (no external HTTP library dependency).
@@ -131,8 +131,8 @@ def post_webhook_notification(
     """Post a message via a Discord channel webhook.
 
     Used for notifications that occur after the interaction token has expired
-    (e.g. idle teardown notifications). Fetches the webhook URL from AWS
-    Secrets Manager, then POSTs to it.
+    (e.g. teardown notifications). Fetches the webhook URL from AWS Secrets
+    Manager, then POSTs to it.
 
     Args:
         content: The message text to post.

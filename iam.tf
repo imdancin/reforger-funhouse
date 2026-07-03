@@ -175,12 +175,6 @@ resource "aws_iam_user_policy" "eso_reader_policy" {
         Effect   = "Allow"
         Action   = ["ssm:GetParameter"]
         Resource = "arn:aws:ssm:us-west-2:*:parameter/arma-reforger/public-address"
-      },
-      {
-        Sid      = "InvokeTeardownLambda"
-        Effect   = "Allow"
-        Action   = ["lambda:InvokeFunction"]
-        Resource = "arn:aws:lambda:us-west-2:*:function:arma-teardown-handler"
       }
     ]
   })
