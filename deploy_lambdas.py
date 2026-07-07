@@ -113,6 +113,29 @@ def build_zip() -> bytes:
     return zip_bytes
 
 
+def _prune_old_versions(client, function_name: str, keep_version: str) -> int:
+    """Delete published versions of a function other than $LATEST and keep_version.
+
+    SnapStart caches a snapshot for every published version for as long as that
+    version exists, billed continuously regardless of invocation traffic. Since
+    only the version behind the 'live' alias is ever invoked, older versions are
+    pure cost with no benefit and should be removed after each deploy.
+    """
+    paginator = client.get_paginator("list_versions_by_function")
+    deleted = 0
+    for page in paginator.paginate(FunctionName=function_name):
+        for v in page["Versions"]:
+            version = v["Version"]
+            if version in ("$LATEST", keep_version):
+                continue
+            try:
+                client.delete_function(FunctionName=function_name, Qualifier=version)
+                deleted += 1
+            except Exception as e:
+                print(f"\n    Warning: failed to delete version {version}: {e}", end="")
+    return deleted
+
+
 def deploy(profile: str | None, region: str) -> None:
     """Build the zip and deploy to all Lambda functions."""
     zip_bytes = build_zip()
@@ -159,7 +182,8 @@ def deploy(profile: str | None, region: str) -> None:
                     Name="live",
                     FunctionVersion=new_version,
                 )
-                print(f"OK (v{new_version}, SnapStart)")
+                pruned = _prune_old_versions(client, function_name, keep_version=new_version)
+                print(f"OK (v{new_version}, SnapStart, pruned {pruned} old version(s))")
             else:
                 print("OK")
             successes += 1
