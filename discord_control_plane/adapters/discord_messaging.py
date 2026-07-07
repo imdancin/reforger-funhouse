@@ -20,6 +20,16 @@ import boto3
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 
+# Discord (via Cloudflare) blocks requests carrying the default urllib
+# User-Agent ("Python-urllib/3.x") as bot-signature traffic (Cloudflare
+# error 1010). Discord's API docs recommend always sending a descriptive
+# User-Agent, so every outbound request in this module includes one.
+_USER_AGENT = "reforger-funhouse-control-plane (https://github.com/imdancin/reforger-funhouse, 1.0)"
+_REQUEST_HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": _USER_AGENT,
+}
+
 
 class DiscordMessagingError(Exception):
     """Raised when a Discord messaging operation fails."""
@@ -53,7 +63,7 @@ def post_followup(
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=_REQUEST_HEADERS,
         method="POST",
     )
 
@@ -119,7 +129,7 @@ def edit_original(
     req = urllib.request.Request(
         url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=_REQUEST_HEADERS,
         method="PATCH",
     )
 
@@ -190,7 +200,7 @@ def post_webhook_notification(
     req = urllib.request.Request(
         webhook_url,
         data=payload,
-        headers={"Content-Type": "application/json"},
+        headers=_REQUEST_HEADERS,
         method="POST",
     )
 
