@@ -65,13 +65,29 @@ def post_followup(
                     f"Discord follow-up POST failed: HTTP {resp.status}"
                 )
     except urllib.error.HTTPError as exc:
+        body = _read_error_body(exc)
         raise DiscordMessagingError(
             f"Discord follow-up POST failed: HTTP {exc.code} - {exc.reason}"
+            f"{f' - {body}' if body else ''}"
         ) from exc
     except urllib.error.URLError as exc:
         raise DiscordMessagingError(
             f"Discord follow-up POST failed: {exc.reason}"
         ) from exc
+
+
+def _read_error_body(exc: urllib.error.HTTPError) -> str:
+    """Best-effort read of a Discord HTTPError response body for diagnostics.
+
+    Discord's error bodies are small JSON documents like
+    {"message": "Missing Access", "code": 50001}. Returning this text lets
+    callers distinguish causes (bot removed from thread, missing permission,
+    invalid/expired token, etc.) instead of a bare status code.
+    """
+    try:
+        return exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 def edit_original(
@@ -114,8 +130,10 @@ def edit_original(
                     f"Discord edit-original PATCH failed: HTTP {resp.status}"
                 )
     except urllib.error.HTTPError as exc:
+        body = _read_error_body(exc)
         raise DiscordMessagingError(
             f"Discord edit-original PATCH failed: HTTP {exc.code} - {exc.reason}"
+            f"{f' - {body}' if body else ''}"
         ) from exc
     except urllib.error.URLError as exc:
         raise DiscordMessagingError(
@@ -183,8 +201,10 @@ def post_webhook_notification(
                     f"Discord webhook POST failed: HTTP {resp.status}"
                 )
     except urllib.error.HTTPError as exc:
+        body = _read_error_body(exc)
         raise DiscordMessagingError(
             f"Discord webhook POST failed: HTTP {exc.code} - {exc.reason}"
+            f"{f' - {body}' if body else ''}"
         ) from exc
     except urllib.error.URLError as exc:
         raise DiscordMessagingError(
