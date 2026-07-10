@@ -34,6 +34,19 @@ spec:
             limits:
               memory: "7Gi"
               cpu: "3"
+          # RCON only starts listening once the Reforger server process has
+          # finished loading the scenario/mods and is actually accepting
+          # connections, so it's a reliable signal that the pod is truly
+          # ready (as opposed to just "container process started").
+          # This feeds ArgoCD's health status, which the EC2 bootstrap
+          # script polls before reporting "ready" to the launch orchestrator.
+          readinessProbe:
+            tcpSocket:
+              port: rcon
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           env:
             - name: SERVER_BIND_ADDRESS
               value: "0.0.0.0"
