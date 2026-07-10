@@ -261,6 +261,26 @@ resource "aws_instance" "arma_server" {
                     selfHeal: true
               MANIFEST
 
+              # 14. Wait for the game server pod to be Healthy per ArgoCD (which in
+              # turn depends on the Deployment's readinessProbe on the RCON port).
+              # `kubectl apply` on the Application only registers the object with
+              # ArgoCD — it does not wait for sync or for the pod to actually be
+              # ready to accept players. Reporting "ready" right after apply was
+              # firing before the game server had even started, so the Discord
+              # "Server is ready!" message posted while the server was still
+              # loading. Poll ArgoCD's health status instead.
+              echo "Waiting for root-arma-app to become Healthy..."
+              WAIT_START=$(date +%s)
+              until /usr/local/bin/kubectl get application root-arma-app -n argocd \
+                -o jsonpath='{.status.health.status}' 2>/dev/null | grep -q "Healthy"; do
+                sleep 10
+                ELAPSED=$(( $(date +%s) - WAIT_START ))
+                if [ "$ELAPSED" -gt 600 ]; then
+                  echo "ERROR: root-arma-app did not become Healthy within 600s"
+                  exit 1
+                fi
+              done
+
               echo "=== K3s, ArgoCD, and Arma Reforger Bootstrap Complete ==="
               aws ssm put-parameter --name /arma-reforger/bootstrap-status --value "ready:$(date -u +%Y-%m-%dT%H:%M:%SZ)" --type String --overwrite
               EOF
