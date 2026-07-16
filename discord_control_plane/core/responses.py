@@ -23,7 +23,7 @@ def build_deferred_response() -> InteractionResponse:
     return InteractionResponse(type=InteractionResponseType.DEFERRED_CHANNEL_MESSAGE)
 
 
-def build_launch_started_response(estimate: str = "5–8 minutes") -> InteractionResponse:
+def build_launch_started_response(estimate: str = "8–12 minutes") -> InteractionResponse:
     """Build the immediate /launch acknowledgement (type 4).
 
     Returned synchronously within Discord's 3-second window. The connection

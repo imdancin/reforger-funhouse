@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import socket
+import time
 
 import boto3
 
@@ -89,7 +90,13 @@ def handle_dispatch_apply(event: dict, context=None) -> dict:
     # with a "startup initiated" message, so there is no deferred "thinking"
     # spinner to clear here. MarkRunning posts the connection details as a
     # follow-up once the server is online.
-    return event
+    #
+    # Stamp the dispatch time so CheckReady can track elapsed wait time and
+    # set timed_out=True with a safety margin below the state machine's hard
+    # TimeoutSeconds. Without this, a slow bootstrap gets silently killed by
+    # the top-level timeout (which bypasses the Failed/TimedOut task states
+    # and never posts a Discord message) instead of failing gracefully.
+    return {**event, "dispatch_started_at": time.time()}
 
 
 def lambda_handler_dispatch_apply(event: dict, context=None) -> dict:
@@ -111,11 +118,28 @@ def _probe_port(host: str, port: int, timeout: float = 5.0) -> bool:
         return False
 
 
+
+# Safety margin (seconds) subtracted from LAUNCH_TIMEOUT_SECONDS so CheckReady
+# reports timed_out=True — triggering the graceful Failed/TimedOut path that
+# posts a Discord message — before the Step Functions state-machine-level
+# TimeoutSeconds hard-kills the execution. A hard kill bypasses Catch blocks
+# entirely, which previously left users with no message at all once bootstrap
+# started taking longer (it now waits for the game server to genuinely be
+# healthy rather than declaring victory right after `kubectl apply`).
+_TIMEOUT_SAFETY_MARGIN_SECONDS = 60
+
+
 def handle_check_ready(event: dict, context=None) -> dict:
     """Check if the server is ready (bootstrap-status + port 2001).
 
     Reads bootstrap-status from SSM and probes the game port on the
-    public IP. Returns {"ready": True/False, ...event}.
+    public IP. Returns {"ready": True/False, "timed_out": True/False, ...event}.
+
+    timed_out is derived from elapsed time since DispatchApply stamped
+    dispatch_started_at on the event, compared against LAUNCH_TIMEOUT_SECONDS
+    minus a safety margin. This lets the orchestrator take the graceful
+    TimedOut branch (posts a Discord message, reconciles state to OFFLINE)
+    instead of being silently killed by the state machine's hard timeout.
     """
     ssm = boto3.client("ssm")
 
@@ -140,11 +164,30 @@ def handle_check_ready(event: dict, context=None) -> dict:
     bootstrap_ready = bootstrap_status.startswith("ready")
     server_ready = bootstrap_ready
 
-    result = {**event, "ready": server_ready, "timed_out": False, "public_ip": public_ip}
+    # Compute elapsed time since dispatch to decide whether we've run out of
+    # budget. dispatch_started_at may be absent (e.g. older in-flight
+    # executions, or direct test invocations) — treat that as "just started"
+    # rather than failing the check.
+    dispatch_started_at = event.get("dispatch_started_at")
+    launch_timeout = int(os.environ.get("LAUNCH_TIMEOUT_SECONDS", "900"))
+    soft_deadline = max(launch_timeout - _TIMEOUT_SAFETY_MARGIN_SECONDS, 0)
+
+    timed_out = False
+    if not server_ready and dispatch_started_at is not None:
+        elapsed = time.time() - dispatch_started_at
+        timed_out = elapsed >= soft_deadline
+
+    result = {
+        **event,
+        "ready": server_ready,
+        "timed_out": timed_out,
+        "public_ip": public_ip,
+    }
     logger.info(
-        "Readiness check: bootstrap=%s, ready=%s",
+        "Readiness check: bootstrap=%s, ready=%s, timed_out=%s",
         bootstrap_status,
         server_ready,
+        timed_out,
     )
     return result
 

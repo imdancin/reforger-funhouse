@@ -24,8 +24,18 @@ variable "discord_app_id" {
 
 variable "launch_timeout_seconds" {
   type        = number
-  default     = 600
-  description = "Maximum seconds to wait for the server to reach RUNNING before timing out"
+  default     = 900
+  description = <<-DESC
+    Maximum seconds to wait for the server to reach RUNNING before timing out.
+    This is the Step Functions state-machine-level TimeoutSeconds — a hard kill
+    that bypasses the Failed/TimedOut task states (and therefore skips posting
+    any Discord message) if reached. CheckReady tracks elapsed time itself and
+    sets timed_out=True with a safety margin below this value so the graceful
+    TimedOut path fires first. Previously 600s, which was tuned for a
+    readiness check that (incorrectly) reported ready before ArgoCD had synced;
+    now that CheckReady waits for the game server to be genuinely healthy,
+    bootstrap can legitimately take longer.
+  DESC
 }
 
 # ─── DynamoDB: Server State Store ─────────────────────────────────────────────
@@ -302,7 +312,8 @@ resource "aws_lambda_function" "check_ready" {
 
   environment {
     variables = {
-      STATE_TABLE_NAME = aws_dynamodb_table.arma_server_state.name
+      STATE_TABLE_NAME      = aws_dynamodb_table.arma_server_state.name
+      LAUNCH_TIMEOUT_SECONDS = tostring(var.launch_timeout_seconds)
     }
   }
 
