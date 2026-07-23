@@ -24,7 +24,13 @@ resource "aws_instance" "arma_server" {
 
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = 20
+    # Bumped from 20GB — container image pulls, extraction, and SteamCMD's
+    # verification passes all write into this disk (not the persistent data
+    # volume) during every container restart. Larger modsets (e.g. Modern
+    # Finland's RHS content) trigger more restart cycles to converge, and
+    # repeated spikes pushed this at-or-near 100% full, tripping kubelet's
+    # disk-pressure taint and evicting pods in a loop.
+    volume_size           = 30
     iops                  = 3000
     throughput            = 125
     delete_on_termination = true # Safe now — persistent data lives on the dedicated EBS volume
