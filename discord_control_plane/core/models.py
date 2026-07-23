@@ -77,6 +77,11 @@ PRESETS: dict[str, Preset] = {
     "proceduralcombat": Preset(
         "proceduralcombat", "values-proceduralcombat.yaml", "Procedural Combat"
     ),
+    "freedomfightersmodernfinland": Preset(
+        "freedomfightersmodernfinland",
+        "values-freedomfighters-modern-finland.yaml",
+        "Freedom Fighters - Modern Finland",
+    ),
 }
 
 DEFAULT_PRESET: str = "values-freedomfighters.yaml"

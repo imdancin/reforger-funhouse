@@ -416,7 +416,7 @@ $headers = @{
 }
 
 # /launch
-$body = '{"name":"launch","description":"Launch the Arma Reforger server with a chosen preset","type":1,"options":[{"name":"preset","description":"Server preset to launch","type":3,"required":false,"choices":[{"name":"Freedom Fighters","value":"freedomfighters"},{"name":"Procedural Combat","value":"proceduralcombat"}]}]}'
+$body = '{"name":"launch","description":"Launch the Arma Reforger server with a chosen preset","type":1,"options":[{"name":"preset","description":"Server preset to launch","type":3,"required":false,"choices":[{"name":"Freedom Fighters","value":"freedomfighters"},{"name":"Procedural Combat","value":"proceduralcombat"},{"name":"Freedom Fighters - Modern Finland","value":"freedomfightersmodernfinland"}]}]}'
 Invoke-RestMethod -Method Post -Uri "https://discord.com/api/v10/applications/$appId/guilds/$guildId/commands" -Headers $headers -Body $body -ContentType "application/json"
 
 # /status
