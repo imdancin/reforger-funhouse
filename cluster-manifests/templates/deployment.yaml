@@ -114,6 +114,12 @@ spec:
             - name: reforger-vol
               mountPath: /reforger
               subPath: reforger
+            - name: reforger-vol
+              mountPath: /reforger/Configs
+              subPath: reforger/Configs
+            - name: reforger-vol
+              mountPath: /reforger/workshop
+              subPath: reforger/workshop
             - name: profile-vol
               mountPath: /home/profile
               subPath: Profile
